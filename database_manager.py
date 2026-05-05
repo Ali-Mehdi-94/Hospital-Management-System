@@ -528,6 +528,231 @@ def get_ward_bed_summary():
         return []
 
 
+# ========== DIAGNOSTIC TESTS & VITALS MANAGEMENT FUNCTIONS ==========
+
+def get_vital_ranges():
+    """
+    Returns the valid min/max ranges for each vital sign measurement.
+    These match the CHECK constraints on the Diagnoses_and_Vitals table.
+    Returns: dict with keys 'bp_systolic', 'bp_diastolic', 'heart_rate', 'sugar_level',
+             each containing 'min', 'max', and 'unit'.
+    """
+    return {
+        'bp_systolic':  {'min': 70,  'max': 200, 'unit': 'mmHg'},
+        'bp_diastolic': {'min': 40,  'max': 130, 'unit': 'mmHg'},
+        'heart_rate':   {'min': 40,  'max': 200, 'unit': 'bpm'},
+        'sugar_level':  {'min': 50,  'max': 500, 'unit': 'mg/dL'},
+    }
+
+
+def insert_vital_record(admission_id, bp_sys, bp_dia, heart_beat, sugar_level):
+    """
+    Records a new set of vital signs for an active admission.
+    Validates all values against the allowed ranges before inserting.
+    Args:
+        admission_id (int): ID of the active admission
+        bp_sys (int/float): Blood pressure systolic (70-200 mmHg)
+        bp_dia (int/float): Blood pressure diastolic (40-130 mmHg)
+        heart_beat (int/float): Heart rate (40-200 bpm)
+        sugar_level (int/float): Blood sugar level (50-500 mg/dL)
+    Returns: (bool, str) - (success, message)
+    """
+    ranges = get_vital_ranges()
+
+    # Client-side validation before hitting the database
+    validations = [
+        (bp_sys,      ranges['bp_systolic'],  'Blood Pressure Systolic'),
+        (bp_dia,      ranges['bp_diastolic'], 'Blood Pressure Diastolic'),
+        (heart_beat,  ranges['heart_rate'],   'Heart Rate'),
+        (sugar_level, ranges['sugar_level'],  'Sugar Level'),
+    ]
+    for value, r, label in validations:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return False, f"❌ {label} must be a numeric value."
+        if not (r['min'] <= v <= r['max']):
+            return False, (
+                f"❌ {label} ({v} {r['unit']}) is out of range. "
+                f"Valid range: {r['min']}–{r['max']} {r['unit']}."
+            )
+
+    try:
+        conn = create_connection()
+        if conn is None:
+            return False, "❌ Database connection failed."
+        cursor = conn.cursor()
+
+        # Validate admission exists and is active
+        cursor.execute(
+            "SELECT admission_id FROM Admissions WHERE admission_id = %s AND discharge_date IS NULL",
+            (admission_id,)
+        )
+        if cursor.fetchone() is None:
+            cursor.close()
+            conn.close()
+            return False, f"❌ Active admission with ID {admission_id} not found."
+
+        cursor.execute(
+            """
+            INSERT INTO Diagnoses_and_Vitals
+                (admission_id, blood_pressure_sys, blood_pressure_dia, heart_beat, sugar_level, recorded_time)
+            VALUES (%s, %s, %s, %s, %s, NOW())
+            """,
+            (admission_id, bp_sys, bp_dia, heart_beat, sugar_level)
+        )
+        conn.commit()
+        new_id = cursor.lastrowid
+        cursor.close()
+        conn.close()
+        return True, f"✅ Vital record saved. Vital ID: {new_id}"
+
+    except Error as e:
+        print(f"❌ Error inserting vital record: {e}")
+        return False, f"❌ Error: {e}"
+
+
+def get_patient_vitals(admission_id):
+    """
+    Fetches all vital sign records for a given admission, ordered by recorded time.
+    Args: admission_id (int): ID of the admission
+    Returns: List of tuples (vital_id, admission_id, bp_sys, bp_dia, heart_beat, sugar_level, recorded_time)
+    """
+    try:
+        conn = create_connection()
+        if conn is None:
+            return []
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT vital_id, admission_id, blood_pressure_sys, blood_pressure_dia,
+                   heart_beat, sugar_level, recorded_time
+            FROM Diagnoses_and_Vitals
+            WHERE admission_id = %s
+            ORDER BY recorded_time DESC
+            """,
+            (admission_id,)
+        )
+        vitals = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return vitals if vitals else []
+    except Error as e:
+        print(f"❌ Error fetching patient vitals: {e}")
+        return []
+
+
+def get_latest_vitals(admission_id):
+    """
+    Fetches the most recently recorded vital signs for an admission.
+    Args: admission_id (int): ID of the admission
+    Returns: Tuple (vital_id, admission_id, bp_sys, bp_dia, heart_beat, sugar_level, recorded_time)
+             or None if no records exist.
+    """
+    try:
+        conn = create_connection()
+        if conn is None:
+            return None
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT vital_id, admission_id, blood_pressure_sys, blood_pressure_dia,
+                   heart_beat, sugar_level, recorded_time
+            FROM Diagnoses_and_Vitals
+            WHERE admission_id = %s
+            ORDER BY recorded_time DESC
+            LIMIT 1
+            """,
+            (admission_id,)
+        )
+        vital = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        return vital
+    except Error as e:
+        print(f"❌ Error fetching latest vitals: {e}")
+        return None
+
+
+def search_vitals_by_date(admission_id, start_date, end_date):
+    """
+    Fetches vital records for an admission within the given date range (inclusive).
+    Args:
+        admission_id (int): ID of the admission
+        start_date (str): Start date in YYYY-MM-DD format
+        end_date (str): End date in YYYY-MM-DD format
+    Returns: List of tuples (vital_id, admission_id, bp_sys, bp_dia, heart_beat, sugar_level, recorded_time)
+    """
+    try:
+        conn = create_connection()
+        if conn is None:
+            return []
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT vital_id, admission_id, blood_pressure_sys, blood_pressure_dia,
+                   heart_beat, sugar_level, recorded_time
+            FROM Diagnoses_and_Vitals
+            WHERE admission_id = %s
+              AND DATE(recorded_time) BETWEEN %s AND %s
+            ORDER BY recorded_time ASC
+            """,
+            (admission_id, start_date, end_date)
+        )
+        vitals = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return vitals if vitals else []
+    except Error as e:
+        print(f"❌ Error searching vitals by date: {e}")
+        return []
+
+
+def get_vitals_summary(admission_id):
+    """
+    Calculates aggregate statistics (average, minimum, maximum) for all vital
+    records belonging to an admission.
+    Args: admission_id (int): ID of the admission
+    Returns: Tuple (count, avg_bp_sys, avg_bp_dia, avg_hr, avg_sugar,
+                    min_bp_sys, min_bp_dia, min_hr, min_sugar,
+                    max_bp_sys, max_bp_dia, max_hr, max_sugar)
+             or None if no records exist.
+    """
+    try:
+        conn = create_connection()
+        if conn is None:
+            return None
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*)                           AS record_count,
+                AVG(blood_pressure_sys)            AS avg_bp_sys,
+                AVG(blood_pressure_dia)            AS avg_bp_dia,
+                AVG(heart_beat)                    AS avg_hr,
+                AVG(sugar_level)                   AS avg_sugar,
+                MIN(blood_pressure_sys)            AS min_bp_sys,
+                MIN(blood_pressure_dia)            AS min_bp_dia,
+                MIN(heart_beat)                    AS min_hr,
+                MIN(sugar_level)                   AS min_sugar,
+                MAX(blood_pressure_sys)            AS max_bp_sys,
+                MAX(blood_pressure_dia)            AS max_bp_dia,
+                MAX(heart_beat)                    AS max_hr,
+                MAX(sugar_level)                   AS max_sugar
+            FROM Diagnoses_and_Vitals
+            WHERE admission_id = %s
+            """,
+            (admission_id,)
+        )
+        summary = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        return summary if summary and summary[0] else None
+    except Error as e:
+        print(f"❌ Error fetching vitals summary: {e}")
+        return None
+
+
 # --- TESTING THE NEW INSERT FUNCTION ---
 if __name__ == "__main__":
     print("\n--- Registering a New Patient ---")

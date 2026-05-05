@@ -356,6 +356,184 @@ class RoomAllocationView:
         self.text_box.configure(state="disabled")
 
 
+# ========== DIAGNOSTIC TESTS & VITALS VIEW CLASS ==========
+
+class DiagnosticVitalsView:
+    """
+    Manages the Diagnostic Tests & Vitals Management UI component.
+    Handles vital sign recording, history display, statistics, and date-range search.
+    """
+
+    # Normal / warning thresholds used for status indicators
+    _WARN = {
+        'bp_systolic':  (90,  160),   # below 90 or above 160 → warning/critical
+        'bp_diastolic': (60,  100),
+        'heart_rate':   (60,  100),
+        'sugar_level':  (70,  180),
+    }
+
+    def __init__(self, parent_text_box, database_manager):
+        self.text_box = parent_text_box
+        self.db = database_manager
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _fmt_datetime(self, dt_obj):
+        """Format a datetime or date object as DD-MM-YYYY HH:MM:SS."""
+        if dt_obj is None:
+            return "N/A"
+        try:
+            if hasattr(dt_obj, 'strftime'):
+                if hasattr(dt_obj, 'hour'):
+                    return dt_obj.strftime("%d-%m-%Y %H:%M:%S")
+                return dt_obj.strftime("%d-%m-%Y")
+            return str(dt_obj)
+        except Exception:
+            return str(dt_obj)
+
+    def _status_icon(self, vital_key, value):
+        """Return 🟢 Normal, 🟡 Warning, or 🔴 Critical based on thresholds."""
+        if value is None:
+            return "⚪ N/A   "
+        lo, hi = self._WARN[vital_key]
+        if lo <= float(value) <= hi:
+            return "🟢 Normal "
+        ranges = self.db.get_vital_ranges()
+        r = ranges[vital_key]
+        if r['min'] <= float(value) <= r['max']:
+            return "🟡 Warning"
+        return "🔴 Critical"
+
+    def _write(self, text):
+        self.text_box.insert("end", text)
+
+    # ------------------------------------------------------------------
+    # Public display methods
+    # ------------------------------------------------------------------
+
+    def show_vitals_history(self, admission_id):
+        """Display all vital records for the given admission in an ASCII table."""
+        self.text_box.configure(state="normal")
+        self.text_box.delete("1.0", "end")
+
+        vitals = self.db.get_patient_vitals(admission_id)
+
+        self._write("╔" + "═" * 118 + "╗\n")
+        self._write("║ " + f"VITAL SIGNS HISTORY  —  Admission ID: {admission_id}".center(116) + " ║\n")
+        self._write("╠" + "═" * 118 + "╣\n")
+
+        if not vitals:
+            self._write("║ " + "No vital records found for this admission.".center(116) + " ║\n")
+            self._write("╚" + "═" * 118 + "╝\n")
+            self.text_box.configure(state="disabled")
+            return
+
+        self._write(
+            "║ VitalID │ BP Sys (mmHg) │ BP Dia (mmHg) │ Heart Rate (bpm) │ Sugar (mg/dL) │ Recorded At              ║\n"
+        )
+        self._write("╠" + "═" * 118 + "╣\n")
+
+        for row in vitals:
+            vital_id, adm_id, bp_sys, bp_dia, hr, sugar, rec_time = row
+            ts = self._fmt_datetime(rec_time)
+            bp_sys_s  = f"{bp_sys} {self._status_icon('bp_systolic',  bp_sys)}"
+            bp_dia_s  = f"{bp_dia} {self._status_icon('bp_diastolic', bp_dia)}"
+            hr_s      = f"{hr} {self._status_icon('heart_rate',   hr)}"
+            sugar_s   = f"{sugar} {self._status_icon('sugar_level',  sugar)}"
+            self._write(
+                f"║ {str(vital_id):7} │ {str(bp_sys_s):<13} │ {str(bp_dia_s):<13} │ {str(hr_s):<16} │ {str(sugar_s):<13} │ {ts:<24} ║\n"
+            )
+
+        self._write("╚" + "═" * 118 + "╝\n")
+        self._write(f"\n📋 Total Records: {len(vitals)}\n")
+        self._write("💡 Legend: 🟢 Normal  🟡 Warning  🔴 Critical\n")
+        self.text_box.configure(state="disabled")
+
+    def show_vitals_summary(self, admission_id):
+        """Display aggregate statistics for vitals of the given admission."""
+        self.text_box.configure(state="normal")
+        self.text_box.delete("1.0", "end")
+
+        summary = self.db.get_vitals_summary(admission_id)
+
+        self._write("╔" + "═" * 80 + "╗\n")
+        self._write("║ " + f"VITALS SUMMARY  —  Admission ID: {admission_id}".center(78) + " ║\n")
+        self._write("╠" + "═" * 80 + "╣\n")
+
+        if not summary:
+            self._write("║ " + "No vital records found for this admission.".center(78) + " ║\n")
+            self._write("╚" + "═" * 80 + "╝\n")
+            self.text_box.configure(state="disabled")
+            return
+
+        count = summary[0]
+        avg_bp_sys, avg_bp_dia, avg_hr, avg_sugar = summary[1], summary[2], summary[3], summary[4]
+        min_bp_sys, min_bp_dia, min_hr, min_sugar = summary[5], summary[6], summary[7], summary[8]
+        max_bp_sys, max_bp_dia, max_hr, max_sugar = summary[9], summary[10], summary[11], summary[12]
+
+        def _r(v):
+            return round(float(v), 1) if v is not None else "N/A"
+
+        self._write(f"║  Total Records Analyzed : {count}\n")
+        self._write("╟─" + "─" * 78 + "─╢\n")
+        self._write(f"║  {'Vital':<28} {'Average':>10}  {'Minimum':>10}  {'Maximum':>10}\n")
+        self._write("╟─" + "─" * 78 + "─╢\n")
+        rows = [
+            ("Blood Pressure Systolic (mmHg)",  _r(avg_bp_sys),  _r(min_bp_sys),  _r(max_bp_sys)),
+            ("Blood Pressure Diastolic (mmHg)", _r(avg_bp_dia),  _r(min_bp_dia),  _r(max_bp_dia)),
+            ("Heart Rate (bpm)",                _r(avg_hr),      _r(min_hr),      _r(max_hr)),
+            ("Sugar Level (mg/dL)",             _r(avg_sugar),   _r(min_sugar),   _r(max_sugar)),
+        ]
+        for label, avg, mn, mx in rows:
+            self._write(f"║  {label:<28} {str(avg):>10}  {str(mn):>10}  {str(mx):>10}\n")
+
+        self._write("╚" + "═" * 80 + "╝\n")
+        self.text_box.configure(state="disabled")
+
+    def show_search_results(self, admission_id, start_date, end_date):
+        """Display vitals filtered by date range."""
+        self.text_box.configure(state="normal")
+        self.text_box.delete("1.0", "end")
+
+        vitals = self.db.search_vitals_by_date(admission_id, start_date, end_date)
+
+        start_fmt = start_date if start_date else "N/A"
+        end_fmt   = end_date   if end_date   else "N/A"
+
+        self._write("╔" + "═" * 118 + "╗\n")
+        self._write("║ " + f"VITALS SEARCH  —  Admission: {admission_id}  |  {start_fmt} → {end_fmt}".center(116) + " ║\n")
+        self._write("╠" + "═" * 118 + "╣\n")
+
+        if not vitals:
+            self._write("║ " + "No records found in the selected date range.".center(116) + " ║\n")
+            self._write("╚" + "═" * 118 + "╝\n")
+            self.text_box.configure(state="disabled")
+            return
+
+        self._write(
+            "║ VitalID │ BP Sys (mmHg) │ BP Dia (mmHg) │ Heart Rate (bpm) │ Sugar (mg/dL) │ Recorded At              ║\n"
+        )
+        self._write("╠" + "═" * 118 + "╣\n")
+
+        for row in vitals:
+            vital_id, adm_id, bp_sys, bp_dia, hr, sugar, rec_time = row
+            ts = self._fmt_datetime(rec_time)
+            bp_sys_s = f"{bp_sys} {self._status_icon('bp_systolic',  bp_sys)}"
+            bp_dia_s = f"{bp_dia} {self._status_icon('bp_diastolic', bp_dia)}"
+            hr_s     = f"{hr} {self._status_icon('heart_rate',   hr)}"
+            sugar_s  = f"{sugar} {self._status_icon('sugar_level',  sugar)}"
+            self._write(
+                f"║ {str(vital_id):7} │ {str(bp_sys_s):<13} │ {str(bp_dia_s):<13} │ {str(hr_s):<16} │ {str(sugar_s):<13} │ {ts:<24} ║\n"
+            )
+
+        self._write("╚" + "═" * 118 + "╝\n")
+        self._write(f"\n🔍 Found {len(vitals)} record(s).\n")
+        self._write("💡 Legend: 🟢 Normal  🟡 Warning  🔴 Critical\n")
+        self.text_box.configure(state="disabled")
+
+
 # --- 2. DEFINE BUTTON ACTIONS ---
 
 def show_doctors():
@@ -739,6 +917,229 @@ def open_discharge_patient_window():
     admission_id_entry.bind("<Return>", lambda e: execute_discharge())
 
 
+def open_record_vitals_window():
+    """Opens a popup to record new vital signs for an active admission."""
+    vitals_window = ctk.CTkToplevel(app)
+    vitals_window.title("Record New Vitals")
+    vitals_window.geometry("480x480")
+    vitals_window.transient(app)
+    vitals_window.grab_set()
+
+    ctk.CTkLabel(vitals_window, text="Record Patient Vital Signs", font=("Arial", 14, "bold")).pack(pady=10)
+    ctk.CTkLabel(
+        vitals_window,
+        text="Enter the Admission ID and current vital readings:",
+        font=("Arial", 11),
+        justify="center"
+    ).pack(pady=3)
+
+    ranges = db.get_vital_ranges()
+
+    def _make_field(parent, label_text, placeholder):
+        ctk.CTkLabel(parent, text=label_text, anchor="w").pack(fill="x", padx=30, pady=(6, 0))
+        entry = ctk.CTkEntry(parent, placeholder_text=placeholder, width=400)
+        entry.pack(padx=30)
+        return entry
+
+    admission_entry = _make_field(vitals_window, "Admission ID:", "e.g., 1")
+    admission_entry.focus()
+
+    bp_sys_entry = _make_field(
+        vitals_window,
+        f"Blood Pressure Systolic ({ranges['bp_systolic']['min']}–{ranges['bp_systolic']['max']} mmHg):",
+        f"e.g., 120"
+    )
+    bp_dia_entry = _make_field(
+        vitals_window,
+        f"Blood Pressure Diastolic ({ranges['bp_diastolic']['min']}–{ranges['bp_diastolic']['max']} mmHg):",
+        f"e.g., 80"
+    )
+    hr_entry = _make_field(
+        vitals_window,
+        f"Heart Rate ({ranges['heart_rate']['min']}–{ranges['heart_rate']['max']} bpm):",
+        f"e.g., 72"
+    )
+    sugar_entry = _make_field(
+        vitals_window,
+        f"Sugar Level ({ranges['sugar_level']['min']}–{ranges['sugar_level']['max']} mg/dL):",
+        f"e.g., 100"
+    )
+
+    result_label = ctk.CTkLabel(vitals_window, text="", font=("Arial", 10))
+    result_label.pack(pady=5)
+
+    def execute_record():
+        try:
+            admission_id = int(admission_entry.get().strip())
+        except ValueError:
+            result_label.configure(text="❌ Admission ID must be a number.", text_color="#FF6B6B")
+            return
+        try:
+            bp_sys = float(bp_sys_entry.get().strip())
+            bp_dia = float(bp_dia_entry.get().strip())
+            hr     = float(hr_entry.get().strip())
+            sugar  = float(sugar_entry.get().strip())
+        except ValueError:
+            result_label.configure(text="❌ All vital values must be numeric.", text_color="#FF6B6B")
+            return
+
+        success, message = db.insert_vital_record(admission_id, bp_sys, bp_dia, hr, sugar)
+        if success:
+            result_label.configure(text=message, text_color="#4CAF50")
+            textbox.configure(state="normal")
+            textbox.delete("1.0", "end")
+            textbox.insert("end", message + "\n")
+            textbox.configure(state="disabled")
+            vitals_window.after(1500, vitals_window.destroy)
+        else:
+            result_label.configure(text=message, text_color="#FF6B6B")
+
+    ctk.CTkButton(
+        vitals_window,
+        text="Save Vitals",
+        command=execute_record,
+        fg_color="#4CAF50",
+        hover_color="#45a049",
+        height=38
+    ).pack(pady=10)
+
+    admission_entry.bind("<Return>", lambda e: execute_record())
+
+
+def show_patient_vitals():
+    """Opens a popup to select an admission, then shows its full vitals history."""
+    hist_window = ctk.CTkToplevel(app)
+    hist_window.title("View Patient Vitals History")
+    hist_window.geometry("450x200")
+    hist_window.transient(app)
+    hist_window.grab_set()
+
+    ctk.CTkLabel(hist_window, text="Enter Admission ID:", font=("Arial", 12, "bold")).pack(pady=10)
+
+    adm_entry = ctk.CTkEntry(hist_window, placeholder_text="e.g., 1", width=380)
+    adm_entry.pack(pady=10, padx=30)
+    adm_entry.focus()
+
+    error_label = ctk.CTkLabel(hist_window, text="", font=("Arial", 10), text_color="#FF6B6B")
+    error_label.pack(pady=2)
+
+    def load_history():
+        try:
+            admission_id = int(adm_entry.get().strip())
+        except ValueError:
+            error_label.configure(text="❌ Admission ID must be a number.")
+            return
+        vitals_view = DiagnosticVitalsView(textbox, db)
+        vitals_view.show_vitals_history(admission_id)
+        hist_window.destroy()
+
+    ctk.CTkButton(
+        hist_window,
+        text="View History",
+        command=load_history,
+        fg_color="#2196F3",
+        hover_color="#0b7dda",
+        height=38
+    ).pack(pady=10)
+
+    adm_entry.bind("<Return>", lambda e: load_history())
+
+
+def show_vitals_summary():
+    """Opens a popup to select an admission, then shows vitals statistics."""
+    summary_window = ctk.CTkToplevel(app)
+    summary_window.title("View Vitals Summary")
+    summary_window.geometry("450x200")
+    summary_window.transient(app)
+    summary_window.grab_set()
+
+    ctk.CTkLabel(summary_window, text="Enter Admission ID:", font=("Arial", 12, "bold")).pack(pady=10)
+
+    adm_entry = ctk.CTkEntry(summary_window, placeholder_text="e.g., 1", width=380)
+    adm_entry.pack(pady=10, padx=30)
+    adm_entry.focus()
+
+    error_label = ctk.CTkLabel(summary_window, text="", font=("Arial", 10), text_color="#FF6B6B")
+    error_label.pack(pady=2)
+
+    def load_summary():
+        try:
+            admission_id = int(adm_entry.get().strip())
+        except ValueError:
+            error_label.configure(text="❌ Admission ID must be a number.")
+            return
+        vitals_view = DiagnosticVitalsView(textbox, db)
+        vitals_view.show_vitals_summary(admission_id)
+        summary_window.destroy()
+
+    ctk.CTkButton(
+        summary_window,
+        text="View Summary",
+        command=load_summary,
+        fg_color="#9C27B0",
+        hover_color="#7b1fa2",
+        height=38
+    ).pack(pady=10)
+
+    adm_entry.bind("<Return>", lambda e: load_summary())
+
+
+def open_vitals_search_window():
+    """Opens a popup to search vitals for an admission by date range."""
+    import datetime
+
+    search_window = ctk.CTkToplevel(app)
+    search_window.title("Search Vitals by Date")
+    search_window.geometry("480x320")
+    search_window.transient(app)
+    search_window.grab_set()
+
+    ctk.CTkLabel(search_window, text="Search Vitals by Date Range", font=("Arial", 14, "bold")).pack(pady=10)
+
+    ctk.CTkLabel(search_window, text="Admission ID:", anchor="w").pack(fill="x", padx=30, pady=(6, 0))
+    adm_entry = ctk.CTkEntry(search_window, placeholder_text="e.g., 1", width=400)
+    adm_entry.pack(padx=30)
+    adm_entry.focus()
+
+    today_str = datetime.date.today().strftime("%Y-%m-%d")
+
+    ctk.CTkLabel(search_window, text="Start Date (YYYY-MM-DD):", anchor="w").pack(fill="x", padx=30, pady=(6, 0))
+    start_entry = ctk.CTkEntry(search_window, placeholder_text=f"e.g., {today_str}", width=400)
+    start_entry.pack(padx=30)
+
+    ctk.CTkLabel(search_window, text="End Date (YYYY-MM-DD):", anchor="w").pack(fill="x", padx=30, pady=(6, 0))
+    end_entry = ctk.CTkEntry(search_window, placeholder_text=f"e.g., {today_str}", width=400)
+    end_entry.insert(0, today_str)
+    end_entry.pack(padx=30)
+
+    error_label = ctk.CTkLabel(search_window, text="", font=("Arial", 10), text_color="#FF6B6B")
+    error_label.pack(pady=4)
+
+    def execute_search():
+        try:
+            admission_id = int(adm_entry.get().strip())
+        except ValueError:
+            error_label.configure(text="❌ Admission ID must be a number.")
+            return
+        start_date = start_entry.get().strip()
+        end_date   = end_entry.get().strip()
+        if not start_date or not end_date:
+            error_label.configure(text="❌ Please enter both start and end dates.")
+            return
+        vitals_view = DiagnosticVitalsView(textbox, db)
+        vitals_view.show_search_results(admission_id, start_date, end_date)
+        search_window.destroy()
+
+    ctk.CTkButton(
+        search_window,
+        text="Search",
+        command=execute_search,
+        fg_color="#FF9800",
+        hover_color="#e68900",
+        height=38
+    ).pack(pady=10)
+
+
 # --- 3. CREATE THE VISUAL ELEMENTS FOR MAIN WINDOW ---
 title_label = ctk.CTkLabel(app, text="Hospital Management Dashboard", font=("Arial", 24, "bold"))
 title_label.pack(pady=20)
@@ -788,6 +1189,24 @@ btn_admit_patient.pack(side="left", padx=5)
 
 btn_discharge_patient = ctk.CTkButton(room_frame, text="Discharge Patient", command=open_discharge_patient_window, height=40, font=("Arial", 12), width=160, fg_color="#F44336", hover_color="#d32f2f")
 btn_discharge_patient.pack(side="left", padx=5)
+
+# --- DIAGNOSTIC TESTS & VITALS MANAGEMENT ---
+vitals_frame = ctk.CTkFrame(app)
+vitals_frame.pack(pady=10, padx=20, fill="x")
+
+ctk.CTkLabel(vitals_frame, text="🩺 VITALS", font=("Arial", 12, "bold")).pack(side="left", padx=5)
+
+btn_record_vitals = ctk.CTkButton(vitals_frame, text="Record New Vitals", command=open_record_vitals_window, height=40, font=("Arial", 12), width=160, fg_color="#4CAF50", hover_color="#45a049")
+btn_record_vitals.pack(side="left", padx=5)
+
+btn_vitals_history = ctk.CTkButton(vitals_frame, text="Vitals History", command=show_patient_vitals, height=40, font=("Arial", 12), width=150, fg_color="#2196F3", hover_color="#0b7dda")
+btn_vitals_history.pack(side="left", padx=5)
+
+btn_vitals_summary = ctk.CTkButton(vitals_frame, text="Vitals Summary", command=show_vitals_summary, height=40, font=("Arial", 12), width=150, fg_color="#9C27B0", hover_color="#7b1fa2")
+btn_vitals_summary.pack(side="left", padx=5)
+
+btn_vitals_search = ctk.CTkButton(vitals_frame, text="Search by Date", command=open_vitals_search_window, height=40, font=("Arial", 12), width=150, fg_color="#FF9800", hover_color="#e68900")
+btn_vitals_search.pack(side="left", padx=5)
 
 # --- OUTPUT TEXTBOX ---
 textbox = ctk.CTkTextbox(app, width=600, height=300, font=("Courier", 11))
