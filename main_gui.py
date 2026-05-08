@@ -14,6 +14,8 @@ app.withdraw()
 session = {"is_authenticated": False, "username": "Guest"}
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin123"
+MAX_VITALS_HISTORY_ROWS = 20
+RECORDED_AT_COLUMN_CHARS = 12
 btn_delete_patient = None
 btn_complete_profile = None
 login_status_label = None
@@ -645,10 +647,10 @@ class CompletePatientView:
             self.text_box.insert("end", "┌─────────┬────────────┬───────────────┬───────────────┬──────────────┬──────────────┐\n")
             self.text_box.insert("end", "│ Vital ID │ Admission  │ BP Sys / Dia  │ Heart Rate    │ Sugar Level  │ Recorded At   │\n")
             self.text_box.insert("end", "├─────────┼────────────┼───────────────┼───────────────┼──────────────┼──────────────┤\n")
-            for row in data["vitals_history"][:20]:
+            for row in data["vitals_history"][:MAX_VITALS_HISTORY_ROWS]:
                 self.text_box.insert(
                     "end",
-                    f"│ {str(row[0]):<7} │ {str(row[1]):<10} │ {str(row[2])+'/'+str(row[3]):<13} │ {str(row[4]):<13} │ {str(row[5]):<12} │ {self._fmt_datetime(row[6])[:12]:<12} │\n",
+                    f"│ {str(row[0]):<7} │ {str(row[1]):<10} │ {str(row[2])+'/'+str(row[3]):<13} │ {str(row[4]):<13} │ {str(row[5]):<12} │ {self._fmt_datetime(row[6])[:RECORDED_AT_COLUMN_CHARS]:<12} │\n",
                 )
             self.text_box.insert("end", "└─────────┴────────────┴───────────────┴───────────────┴──────────────┴──────────────┘\n\n")
         else:
