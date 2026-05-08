@@ -1071,31 +1071,41 @@ def get_complete_patient_profile_data(patient_id):
             return None
         cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            SELECT patient_id, first_name, last_name, dob, gender, phone, address, emergency_contact
-            FROM Patients
-            WHERE patient_id = %s
-            """,
-            (patient_id,),
-        )
-        patient = cursor.fetchone()
-        if not patient:
-            cursor.close()
-            conn.close()
-            return None
-
         blood_type = "N/A"
         medical_history = "N/A"
         try:
-            cursor.execute("SELECT blood_type, medical_history FROM Patients WHERE patient_id = %s", (patient_id,))
-            extra = cursor.fetchone()
-            if extra:
-                blood_type = extra[0] if extra[0] else "N/A"
-                medical_history = extra[1] if extra[1] else "N/A"
+            cursor.execute(
+                """
+                SELECT
+                    patient_id, first_name, last_name, dob, gender, phone, address, emergency_contact,
+                    blood_type, medical_history
+                FROM Patients
+                WHERE patient_id = %s
+                """,
+                (patient_id,),
+            )
+            patient_row = cursor.fetchone()
+            if not patient_row:
+                cursor.close()
+                conn.close()
+                return None
+            patient = patient_row[:8]
+            blood_type = patient_row[8] if patient_row[8] else "N/A"
+            medical_history = patient_row[9] if patient_row[9] else "N/A"
         except Error:
-            blood_type = "N/A"
-            medical_history = "N/A"
+            cursor.execute(
+                """
+                SELECT patient_id, first_name, last_name, dob, gender, phone, address, emergency_contact
+                FROM Patients
+                WHERE patient_id = %s
+                """,
+                (patient_id,),
+            )
+            patient = cursor.fetchone()
+            if not patient:
+                cursor.close()
+                conn.close()
+                return None
 
         cursor.execute(
             """

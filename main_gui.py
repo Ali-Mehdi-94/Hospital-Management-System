@@ -14,7 +14,6 @@ app.withdraw()
 session = {"is_authenticated": False, "username": "Guest"}
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin123"
-MAX_VITALS_HISTORY_ROWS = 20
 btn_delete_patient = None
 btn_complete_profile = None
 login_status_label = None
@@ -547,6 +546,7 @@ class DiagnosticVitalsView:
 
 class CompletePatientView:
     """Displays full, read-only profile information for a patient."""
+    MAX_VITALS_HISTORY_ROWS = 20
 
     def __init__(self, parent_text_box, database_manager):
         self.text_box = parent_text_box
@@ -646,17 +646,17 @@ class CompletePatientView:
             self.text_box.insert("end", "┌─────────┬────────────┬───────────────┬───────────────┬──────────────┬──────────────────┐\n")
             self.text_box.insert("end", "│ Vital ID │ Admission  │ BP Sys / Dia  │ Heart Rate    │ Sugar Level  │ Recorded At      │\n")
             self.text_box.insert("end", "├─────────┼────────────┼───────────────┼───────────────┼──────────────┼──────────────────┤\n")
-            for row in data["vitals_history"][:MAX_VITALS_HISTORY_ROWS]:
+            for row in data["vitals_history"][:self.MAX_VITALS_HISTORY_ROWS]:
                 recorded_at = self._fmt_datetime(row[6])
                 self.text_box.insert(
                     "end",
                     f"│ {str(row[0]):<7} │ {str(row[1]):<10} │ {str(row[2])+'/'+str(row[3]):<13} │ {str(row[4]):<13} │ {str(row[5]):<12} │ {recorded_at:<16} │\n",
                 )
             self.text_box.insert("end", "└─────────┴────────────┴───────────────┴───────────────┴──────────────┴──────────────────┘\n")
-            if len(data["vitals_history"]) > MAX_VITALS_HISTORY_ROWS:
+            if len(data["vitals_history"]) > self.MAX_VITALS_HISTORY_ROWS:
                 self.text_box.insert(
                     "end",
-                    f"ℹ️ Showing latest {MAX_VITALS_HISTORY_ROWS} of {len(data['vitals_history'])} vital records.\n\n",
+                    f"ℹ️ Showing latest {self.MAX_VITALS_HISTORY_ROWS} of {len(data['vitals_history'])} vital records.\n\n",
                 )
             else:
                 self.text_box.insert("end", "\n")
