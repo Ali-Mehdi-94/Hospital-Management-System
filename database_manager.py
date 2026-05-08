@@ -93,7 +93,7 @@ def get_all_patients():
             phone,
             address
         FROM Patients
-        ORDER BY patient_id DESC
+        ORDER BY patient_id ASC
         """
         cursor.execute(query)
         patients = cursor.fetchall()
@@ -952,18 +952,267 @@ def get_prescription_details(prescription_id):
         return None
 
 
-# --- TESTING THE NEW INSERT FUNCTION ---
-if __name__ == "__main__":
-    print("\n--- Registering a New Patient ---")
-    
-    # Testing our function with a new localized patient record
-    insert_new_patient(
-        first_name='Omar',
-        last_name='Shafiq',
-        dob='1995-10-12',
-        gender='Male',
-        phone='0333-5556677',
-        address='House 45, Sector F-10, Islamabad',
-        emergency_contact='0333-5556688'
-    )
-    print("---------------------------------\n")
+def get_patient_dependency_counts(patient_id):
+    """Returns dependency counts for a patient (admissions, vitals, prescriptions)."""
+    try:
+        conn = create_connection()
+        if conn is None:
+            return None
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM Admissions WHERE patient_id = %s", (patient_id,))
+        admissions_count = cursor.fetchone()[0]
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM Diagnoses_and_Vitals dv
+            JOIN Admissions a ON dv.admission_id = a.admission_id
+            WHERE a.patient_id = %s
+            """,
+            (patient_id,),
+        )
+        vitals_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM Prescriptions WHERE patient_id = %s", (patient_id,))
+        prescriptions_count = cursor.fetchone()[0]
+        cursor.close()
+        conn.close()
+        return {
+            "admissions": admissions_count,
+            "vitals": vitals_count,
+            "prescriptions": prescriptions_count,
+        }
+    except Error as e:
+        print(f"❌ Error checking patient dependencies: {e}")
+        return None
+
+
+def delete_patient(patient_id, confirm_cascade=False, dependency_counts=None):
+    """
+    Deletes a patient. If dependent records exist, confirm_cascade must be True to proceed.
+    Cascades deletion of vitals, prescriptions, and admissions before deleting the patient.
+    Returns: (success: bool, message: str, dependency_counts: dict|None)
+    """
+    try:
+        conn = create_connection()
+        if conn is None:
+            return False, "❌ Database connection failed.", None
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT patient_id FROM Patients WHERE patient_id = %s", (patient_id,))
+        if cursor.fetchone() is None:
+            cursor.close()
+            conn.close()
+            return False, f"❌ Patient ID {patient_id} not found.", None
+
+        if dependency_counts is None:
+            cursor.execute("SELECT COUNT(*) FROM Admissions WHERE patient_id = %s", (patient_id,))
+            admissions_count = cursor.fetchone()[0]
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM Diagnoses_and_Vitals dv
+                JOIN Admissions a ON dv.admission_id = a.admission_id
+                WHERE a.patient_id = %s
+                """,
+                (patient_id,),
+            )
+            vitals_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM Prescriptions WHERE patient_id = %s", (patient_id,))
+            prescriptions_count = cursor.fetchone()[0]
+
+            dependency_counts = {
+                "admissions": admissions_count,
+                "vitals": vitals_count,
+                "prescriptions": prescriptions_count,
+            }
+
+        if any(dependency_counts.values()) and not confirm_cascade:
+            cursor.close()
+            conn.close()
+            return (
+                False,
+                "⚠️ Patient has related records. Confirmation required for cascade delete.",
+                dependency_counts,
+            )
+
+        conn.start_transaction()
+
+        cursor.execute(
+            """
+            DELETE dv
+            FROM Diagnoses_and_Vitals dv
+            JOIN Admissions a ON dv.admission_id = a.admission_id
+            WHERE a.patient_id = %s
+            """,
+            (patient_id,),
+        )
+        cursor.execute("DELETE FROM Prescriptions WHERE patient_id = %s", (patient_id,))
+        cursor.execute("DELETE FROM Admissions WHERE patient_id = %s", (patient_id,))
+        cursor.execute("DELETE FROM Patients WHERE patient_id = %s", (patient_id,))
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True, f"✅ Patient ID {patient_id} and related records deleted.", dependency_counts
+
+    except Error as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"❌ Error deleting patient: {e}")
+        return False, f"❌ Error: {e}", None
+
+
+def get_complete_patient_profile_data(patient_id):
+    """Fetches complete profile data for a patient across core HMS modules."""
+    try:
+        conn = create_connection()
+        if conn is None:
+            return None
+        cursor = conn.cursor()
+
+        blood_type = "N/A"
+        medical_history = "N/A"
+        try:
+            cursor.execute(
+                """
+                SELECT
+                    patient_id, first_name, last_name, dob, gender, phone, address, emergency_contact,
+                    blood_type, medical_history
+                FROM Patients
+                WHERE patient_id = %s
+                """,
+                (patient_id,),
+            )
+            patient_row = cursor.fetchone()
+            if not patient_row:
+                cursor.close()
+                conn.close()
+                return None
+            patient = patient_row[:8]
+            blood_type = patient_row[8] if patient_row[8] else "N/A"
+            medical_history = patient_row[9] if patient_row[9] else "N/A"
+        except Error:
+            cursor.execute(
+                """
+                SELECT patient_id, first_name, last_name, dob, gender, phone, address, emergency_contact
+                FROM Patients
+                WHERE patient_id = %s
+                """,
+                (patient_id,),
+            )
+            patient = cursor.fetchone()
+            if not patient:
+                cursor.close()
+                conn.close()
+                return None
+
+        cursor.execute(
+            """
+            SELECT
+                a.admission_id,
+                a.admission_date,
+                a.discharge_date,
+                a.bed_id,
+                w.ward_name,
+                w.ward_type
+            FROM Admissions a
+            LEFT JOIN Beds b ON a.bed_id = b.bed_id
+            LEFT JOIN Wards w ON b.ward_id = w.ward_id
+            WHERE a.patient_id = %s AND a.discharge_date IS NULL
+            ORDER BY a.admission_date DESC
+            """,
+            (patient_id,),
+        )
+        active_admissions = cursor.fetchall()
+
+        cursor.execute(
+            """
+            SELECT
+                a.admission_id,
+                a.admission_date,
+                a.discharge_date,
+                a.bed_id,
+                w.ward_name,
+                w.ward_type
+            FROM Admissions a
+            LEFT JOIN Beds b ON a.bed_id = b.bed_id
+            LEFT JOIN Wards w ON b.ward_id = w.ward_id
+            WHERE a.patient_id = %s
+            ORDER BY a.admission_date DESC
+            """,
+            (patient_id,),
+        )
+        admission_history = cursor.fetchall()
+
+        cursor.execute(
+            """
+            SELECT
+                dv.vital_id,
+                dv.admission_id,
+                dv.blood_pressure_sys,
+                dv.blood_pressure_dia,
+                dv.heart_beat,
+                dv.sugar_level,
+                dv.recorded_time
+            FROM Diagnoses_and_Vitals dv
+            JOIN Admissions a ON dv.admission_id = a.admission_id
+            WHERE a.patient_id = %s
+            ORDER BY dv.recorded_time DESC
+            """,
+            (patient_id,),
+        )
+        vitals_history = cursor.fetchall()
+        latest_vitals = vitals_history[0] if vitals_history else None
+
+        cursor.execute(
+            """
+            SELECT
+                p.prescription_id,
+                pi.medicine_name,
+                CONCAT(d.first_name, ' ', d.last_name) AS doctor_name,
+                p.dosage,
+                p.duration,
+                p.prescribed_date
+            FROM Prescriptions p
+            LEFT JOIN Pharmacy_Inventory pi ON p.inventory_id = pi.inventory_id
+            LEFT JOIN Doctors d ON p.doctor_id = d.doctor_id
+            WHERE p.patient_id = %s
+            ORDER BY p.prescribed_date DESC
+            """,
+            (patient_id,),
+        )
+        prescriptions = cursor.fetchall()
+
+        bills = []
+        try:
+            cursor.execute(
+                """
+                SELECT bill_id, amount, payment_status, issue_date, due_date
+                FROM Bills
+                WHERE patient_id = %s
+                ORDER BY issue_date DESC
+                """,
+                (patient_id,),
+            )
+            bills = cursor.fetchall()
+        except Error:
+            bills = []
+
+        cursor.close()
+        conn.close()
+
+        return {
+            "patient": patient,
+            "blood_type": blood_type,
+            "medical_history": medical_history,
+            "active_admissions": active_admissions,
+            "admission_history": admission_history,
+            "latest_vitals": latest_vitals,
+            "vitals_history": vitals_history,
+            "prescriptions": prescriptions,
+            "bills": bills,
+        }
+    except Error as e:
+        print(f"❌ Error fetching complete patient profile: {e}")
+        return None

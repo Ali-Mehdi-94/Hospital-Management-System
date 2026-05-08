@@ -1,4 +1,5 @@
 import customtkinter as ctk
+from tkinter import messagebox
 import database_manager as db
 
 # --- 1. SET UP THE MAIN WINDOW ---
@@ -8,6 +9,15 @@ ctk.set_default_color_theme("blue")
 app = ctk.CTk()
 app.geometry("700x700")
 app.title("Hospital Management System")
+app.withdraw()
+
+session = {"is_authenticated": False, "username": "Guest"}
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "admin123"
+btn_delete_patient = None
+btn_complete_profile = None
+login_status_label = None
+btn_logout = None
 
 # ========== PATIENT LIST VIEW CLASS ==========
 
@@ -534,6 +544,158 @@ class DiagnosticVitalsView:
         self.text_box.configure(state="disabled")
 
 
+class CompletePatientView:
+    """Displays full, read-only profile information for a patient."""
+    MAX_VITALS_HISTORY_ROWS = 20
+
+    def __init__(self, parent_text_box, database_manager):
+        self.text_box = parent_text_box
+        self.db = database_manager
+
+    def _fmt_date(self, value):
+        if value is None:
+            return "N/A"
+        try:
+            return value.strftime("%d-%m-%Y")
+        except Exception:
+            return str(value)
+
+    def _fmt_datetime(self, value):
+        if value is None:
+            return "N/A"
+        try:
+            return value.strftime("%d-%m-%Y %H:%M")
+        except Exception:
+            return str(value)
+
+    def show_complete_patient_profile(self, patient_id):
+        data = self.db.get_complete_patient_profile_data(patient_id)
+
+        self.text_box.configure(state="normal")
+        self.text_box.delete("1.0", "end")
+
+        if not data:
+            self.text_box.insert("end", f"❌ Patient with ID {patient_id} not found.\n")
+            self.text_box.configure(state="disabled")
+            return
+
+        patient = data["patient"]
+        full_name = f"{patient[1]} {patient[2]}"
+        self.text_box.insert("end", "╔" + "═" * 118 + "╗\n")
+        self.text_box.insert("end", f"║ {'COMPLETE PATIENT PROFILE'.center(118)} ║\n")
+        self.text_box.insert("end", "╠" + "═" * 118 + "╣\n")
+        self.text_box.insert("end", f"║ Patient ID: {patient[0]:<10} Name: {full_name:<40} Viewing User: {session['username']:<22} ║\n")
+        self.text_box.insert("end", "╚" + "═" * 118 + "╝\n\n")
+
+        self.text_box.insert("end", "📌 PERSONAL INFORMATION\n")
+        self.text_box.insert("end", "─" * 120 + "\n")
+        self.text_box.insert("end", f"Name: {full_name}\n")
+        self.text_box.insert("end", f"DOB: {self._fmt_date(patient[3])}\n")
+        self.text_box.insert("end", f"Gender: {patient[4]}\n")
+        self.text_box.insert("end", f"Phone: {patient[5]}\n")
+        self.text_box.insert("end", f"Address: {patient[6]}\n")
+        self.text_box.insert("end", f"Emergency Contact: {patient[7]}\n")
+        self.text_box.insert("end", f"Blood Type: {data['blood_type']}\n")
+        self.text_box.insert("end", f"Medical History: {data['medical_history']}\n\n")
+
+        self.text_box.insert("end", "🏥 ACTIVE ADMISSIONS\n")
+        self.text_box.insert("end", "─" * 120 + "\n")
+        if data["active_admissions"]:
+            self.text_box.insert("end", "┌────────────┬────────────┬──────────────┬────────────┬──────────────┬────────────┐\n")
+            self.text_box.insert("end", "│ AdmissionID │ Admit Date  │ Ward         │ Ward Type  │ Bed          │ Status     │\n")
+            self.text_box.insert("end", "├────────────┼────────────┼──────────────┼────────────┼──────────────┼────────────┤\n")
+            for admission in data["active_admissions"]:
+                adm_id, admit_date, _, bed_id, ward_name, ward_type = admission
+                self.text_box.insert(
+                    "end",
+                    f"│ {str(adm_id):<10} │ {self._fmt_date(admit_date):<10} │ {str(ward_name or 'N/A')[:12]:<12} │ {str(ward_type or 'N/A')[:10]:<10} │ {str(bed_id or 'N/A'):<12} │ {'🟢 Admitted':<10} │\n",
+                )
+            self.text_box.insert("end", "└────────────┴────────────┴──────────────┴────────────┴──────────────┴────────────┘\n\n")
+        else:
+            self.text_box.insert("end", "ℹ️ No active admissions.\n\n")
+
+        self.text_box.insert("end", "🕘 ADMISSION HISTORY\n")
+        self.text_box.insert("end", "─" * 120 + "\n")
+        if data["admission_history"]:
+            self.text_box.insert("end", "┌────────────┬────────────┬────────────┬──────────────┬──────────────┬──────────────┐\n")
+            self.text_box.insert("end", "│ AdmissionID │ Admit Date  │ Discharge  │ Ward         │ Bed          │ Status       │\n")
+            self.text_box.insert("end", "├────────────┼────────────┼────────────┼──────────────┼──────────────┼──────────────┤\n")
+            for admission in data["admission_history"]:
+                adm_id, admit_date, discharge_date, bed_id, ward_name, _ = admission
+                status = "🟢 Admitted" if discharge_date is None else "🔴 Discharged"
+                self.text_box.insert(
+                    "end",
+                    f"│ {str(adm_id):<10} │ {self._fmt_date(admit_date):<10} │ {self._fmt_date(discharge_date):<10} │ {str(ward_name or 'N/A')[:12]:<12} │ {str(bed_id or 'N/A'):<12} │ {status:<12} │\n",
+                )
+            self.text_box.insert("end", "└────────────┴────────────┴────────────┴──────────────┴──────────────┴──────────────┘\n\n")
+        else:
+            self.text_box.insert("end", "ℹ️ No admission history.\n\n")
+
+        self.text_box.insert("end", "🩺 VITAL SIGNS\n")
+        self.text_box.insert("end", "─" * 120 + "\n")
+        latest = data["latest_vitals"]
+        if latest:
+            self.text_box.insert(
+                "end",
+                f"Latest → BP: {latest[2]}/{latest[3]} mmHg | HR: {latest[4]} bpm | Sugar: {latest[5]} mg/dL | Recorded: {self._fmt_datetime(latest[6])}\n",
+            )
+        else:
+            self.text_box.insert("end", "Latest → N/A\n")
+
+        if data["vitals_history"]:
+            self.text_box.insert("end", "┌─────────┬────────────┬───────────────┬───────────────┬──────────────┬──────────────────┐\n")
+            self.text_box.insert("end", "│ Vital ID │ Admission  │ BP Sys / Dia  │ Heart Rate    │ Sugar Level  │ Recorded At      │\n")
+            self.text_box.insert("end", "├─────────┼────────────┼───────────────┼───────────────┼──────────────┼──────────────────┤\n")
+            for row in data["vitals_history"][:self.MAX_VITALS_HISTORY_ROWS]:
+                recorded_at = self._fmt_datetime(row[6])
+                self.text_box.insert(
+                    "end",
+                    f"│ {str(row[0]):<7} │ {str(row[1]):<10} │ {str(row[2])+'/'+str(row[3]):<13} │ {str(row[4]):<13} │ {str(row[5]):<12} │ {recorded_at:<16} │\n",
+                )
+            self.text_box.insert("end", "└─────────┴────────────┴───────────────┴───────────────┴──────────────┴──────────────────┘\n")
+            if len(data["vitals_history"]) > self.MAX_VITALS_HISTORY_ROWS:
+                self.text_box.insert(
+                    "end",
+                    f"ℹ️ Showing latest {self.MAX_VITALS_HISTORY_ROWS} of {len(data['vitals_history'])} vital records.\n\n",
+                )
+            else:
+                self.text_box.insert("end", "\n")
+        else:
+            self.text_box.insert("end", "ℹ️ No vitals history.\n\n")
+
+        self.text_box.insert("end", "💊 PRESCRIPTIONS\n")
+        self.text_box.insert("end", "─" * 120 + "\n")
+        if data["prescriptions"]:
+            self.text_box.insert("end", "┌──────────────┬──────────────────────┬──────────────────────┬──────────────┬──────────────┬──────────────┐\n")
+            self.text_box.insert("end", "│ Presc ID      │ Medicine             │ Doctor               │ Dosage       │ Duration     │ Date         │\n")
+            self.text_box.insert("end", "├──────────────┼──────────────────────┼──────────────────────┼──────────────┼──────────────┼──────────────┤\n")
+            for row in data["prescriptions"]:
+                self.text_box.insert(
+                    "end",
+                    f"│ {str(row[0]):<12} │ {str(row[1] or 'N/A')[:20]:<20} │ {str(row[2] or 'N/A')[:20]:<20} │ {str(row[3] or 'N/A')[:12]:<12} │ {str(row[4] or 'N/A')[:12]:<12} │ {self._fmt_date(row[5]):<12} │\n",
+                )
+            self.text_box.insert("end", "└──────────────┴──────────────────────┴──────────────────────┴──────────────┴──────────────┴──────────────┘\n\n")
+        else:
+            self.text_box.insert("end", "ℹ️ No prescriptions found.\n\n")
+
+        self.text_box.insert("end", "💵 BILLS\n")
+        self.text_box.insert("end", "─" * 120 + "\n")
+        if data["bills"]:
+            self.text_box.insert("end", "┌──────────┬──────────────┬──────────────┬──────────────┬──────────────┐\n")
+            self.text_box.insert("end", "│ Bill ID   │ Amount       │ Status       │ Issue Date   │ Due Date     │\n")
+            self.text_box.insert("end", "├──────────┼──────────────┼──────────────┼──────────────┼──────────────┤\n")
+            for row in data["bills"]:
+                self.text_box.insert(
+                    "end",
+                    f"│ {str(row[0]):<8} │ {str(row[1]):<12} │ {str(row[2] or 'N/A')[:12]:<12} │ {self._fmt_date(row[3]):<12} │ {self._fmt_date(row[4]):<12} │\n",
+                )
+            self.text_box.insert("end", "└──────────┴──────────────┴──────────────┴──────────────┴──────────────┘\n")
+        else:
+            self.text_box.insert("end", "ℹ️ No bills found.\n")
+
+        self.text_box.configure(state="disabled")
+
+
 # --- 2. DEFINE BUTTON ACTIONS ---
 
 def show_doctors():
@@ -551,6 +713,137 @@ def show_patient_list():
     """Handler for 'View All Patients' button."""
     patient_view = PatientListView(textbox, db)
     patient_view.display_all_patients()
+
+
+def require_admin_access(feature_name):
+    """Checks if current session is authenticated admin."""
+    if session["is_authenticated"]:
+        return True
+    messagebox.showwarning("Login Required", f"Please login as admin to access: {feature_name}")
+    return False
+
+
+def show_complete_patient_profile(patient_id):
+    """Shows full patient profile in read-only mode."""
+    if not require_admin_access("View Complete Patient Profile"):
+        return
+    complete_view = CompletePatientView(textbox, db)
+    complete_view.show_complete_patient_profile(patient_id)
+
+
+def open_complete_profile_window():
+    """Open dialog to collect patient ID for complete profile."""
+    if not require_admin_access("View Complete Patient Profile"):
+        return
+
+    profile_window = ctk.CTkToplevel(app)
+    profile_window.title("View Complete Patient Profile")
+    profile_window.geometry("450x220")
+    profile_window.transient(app)
+    profile_window.grab_set()
+
+    ctk.CTkLabel(profile_window, text="Enter Patient ID:", font=("Arial", 12, "bold")).pack(pady=10)
+    patient_id_entry = ctk.CTkEntry(profile_window, placeholder_text="e.g., 1", width=380)
+    patient_id_entry.pack(pady=10, padx=30)
+    patient_id_entry.focus()
+    error_label = ctk.CTkLabel(profile_window, text="", font=("Arial", 10), text_color="#FF6B6B")
+    error_label.pack(pady=2)
+
+    def execute_view():
+        try:
+            patient_id = int(patient_id_entry.get().strip())
+        except ValueError:
+            error_label.configure(text="❌ Patient ID must be a number.")
+            return
+        show_complete_patient_profile(patient_id)
+        profile_window.destroy()
+
+    ctk.CTkButton(
+        profile_window,
+        text="View Complete Profile",
+        command=execute_view,
+        fg_color="#673AB7",
+        hover_color="#512DA8",
+    ).pack(pady=10)
+
+
+def open_delete_patient_window():
+    """Opens confirmation flow to delete a patient with cascade warning."""
+    if not require_admin_access("Delete Patient"):
+        return
+
+    delete_window = ctk.CTkToplevel(app)
+    delete_window.title("Delete Patient")
+    delete_window.geometry("500x260")
+    delete_window.transient(app)
+    delete_window.grab_set()
+
+    ctk.CTkLabel(delete_window, text="Delete Patient Record", font=("Arial", 14, "bold"), text_color="#F44336").pack(pady=10)
+    ctk.CTkLabel(
+        delete_window,
+        text="⚠️ This will delete all patient records including admissions, vitals, and prescriptions",
+        wraplength=440,
+        justify="center",
+        text_color="#F44336"
+    ).pack(pady=5)
+    ctk.CTkLabel(delete_window, text="Patient ID:", anchor="w").pack(fill="x", padx=40, pady=(10, 0))
+    patient_id_entry = ctk.CTkEntry(delete_window, placeholder_text="e.g., 1", width=400)
+    patient_id_entry.pack(padx=40, pady=8)
+    patient_id_entry.focus()
+
+    result_label = ctk.CTkLabel(delete_window, text="", font=("Arial", 10))
+    result_label.pack(pady=5)
+
+    def execute_delete():
+        try:
+            patient_id = int(patient_id_entry.get().strip())
+        except ValueError:
+            result_label.configure(text="❌ Patient ID must be a number.", text_color="#FF6B6B")
+            return
+
+        dependency_counts = db.get_patient_dependency_counts(patient_id)
+        success, message, dependency_counts = db.delete_patient(
+            patient_id,
+            confirm_cascade=False,
+            dependency_counts=dependency_counts,
+        )
+        if not success and dependency_counts:
+            confirm_message = (
+                "This will delete all patient records including admissions, vitals, and prescriptions.\n\n"
+                f"Patient ID: {patient_id}\n"
+                f"Admissions: {dependency_counts['admissions']}\n"
+                f"Vitals: {dependency_counts['vitals']}\n"
+                f"Prescriptions: {dependency_counts['prescriptions']}\n\n"
+                "Do you want to continue?"
+            )
+            confirmed = messagebox.askyesno("Confirm Cascade Delete", confirm_message)
+            if not confirmed:
+                result_label.configure(text="ℹ️ Deletion cancelled.", text_color="#FF9800")
+                return
+            success, message, _ = db.delete_patient(
+                patient_id,
+                confirm_cascade=True,
+                dependency_counts=dependency_counts,
+            )
+
+        if success:
+            result_label.configure(text=message, text_color="#4CAF50")
+            textbox.configure(state="normal")
+            textbox.delete("1.0", "end")
+            textbox.insert("end", message + "\n")
+            textbox.configure(state="disabled")
+            delete_window.after(1200, delete_window.destroy)
+        else:
+            result_label.configure(text=message, text_color="#FF6B6B")
+
+    ctk.CTkButton(
+        delete_window,
+        text="Delete Patient",
+        command=execute_delete,
+        fg_color="#F44336",
+        hover_color="#d32f2f",
+    ).pack(pady=8)
+    patient_id_entry.bind("<Return>", lambda e: execute_delete())
 
 def open_search_patient_window():
     """Opens a popup to search for a specific patient."""
@@ -1140,9 +1433,104 @@ def open_vitals_search_window():
     ).pack(pady=10)
 
 
+def update_auth_ui():
+    """Updates UI controls based on current authentication state."""
+    if login_status_label is not None:
+        role = "Admin" if session["is_authenticated"] else "Guest"
+        login_status_label.configure(text=f"User: {session['username']} ({role})")
+
+    if btn_delete_patient is not None:
+        if session["is_authenticated"]:
+            if not btn_delete_patient.winfo_ismapped():
+                btn_delete_patient.pack(side="left", padx=5)
+        else:
+            if btn_delete_patient.winfo_ismapped():
+                btn_delete_patient.pack_forget()
+
+
+def logout_user():
+    """Logs out current user and returns to login screen."""
+    session["is_authenticated"] = False
+    session["username"] = "Guest"
+    textbox.configure(state="normal")
+    textbox.delete("1.0", "end")
+    textbox.insert("end", "🔒 Logged out successfully.\n")
+    textbox.configure(state="disabled")
+    update_auth_ui()
+    app.withdraw()
+    show_login_window()
+
+
+def show_login_window():
+    """Shows modal login window before allowing dashboard access."""
+    login_window = ctk.CTkToplevel(app)
+    login_window.title("Admin Login")
+    login_window.geometry("400x280")
+    login_window.transient(app)
+    login_window.grab_set()
+    login_window.protocol("WM_DELETE_WINDOW", app.destroy)
+
+    ctk.CTkLabel(login_window, text="Hospital Management Login", font=("Arial", 16, "bold")).pack(pady=15)
+    ctk.CTkLabel(login_window, text="Username:", anchor="w").pack(fill="x", padx=30)
+    username_entry = ctk.CTkEntry(login_window, width=320)
+    username_entry.pack(pady=6, padx=30)
+    username_entry.focus()
+    ctk.CTkLabel(login_window, text="Password:", anchor="w").pack(fill="x", padx=30)
+    password_entry = ctk.CTkEntry(login_window, width=320, show="*")
+    password_entry.pack(pady=6, padx=30)
+
+    status_label = ctk.CTkLabel(login_window, text="", font=("Arial", 10), text_color="#FF6B6B")
+    status_label.pack(pady=5)
+
+    def login_as_admin():
+        username = username_entry.get().strip()
+        password = password_entry.get().strip()
+        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+            session["is_authenticated"] = True
+            session["username"] = ADMIN_USERNAME
+            update_auth_ui()
+            login_window.destroy()
+            app.deiconify()
+            app.lift()
+        else:
+            status_label.configure(text="❌ Invalid admin credentials.")
+
+    def continue_as_guest():
+        session["is_authenticated"] = False
+        session["username"] = "Guest"
+        update_auth_ui()
+        login_window.destroy()
+        app.deiconify()
+        app.lift()
+
+    ctk.CTkButton(
+        login_window,
+        text="Login as Admin",
+        command=login_as_admin,
+        fg_color="#4CAF50",
+        hover_color="#45a049",
+    ).pack(pady=(8, 6))
+    ctk.CTkButton(
+        login_window,
+        text="Continue as Guest",
+        command=continue_as_guest,
+        fg_color="#607D8B",
+        hover_color="#455A64",
+    ).pack()
+
+    password_entry.bind("<Return>", lambda e: login_as_admin())
+
+
 # --- 3. CREATE THE VISUAL ELEMENTS FOR MAIN WINDOW ---
 title_label = ctk.CTkLabel(app, text="Hospital Management Dashboard", font=("Arial", 24, "bold"))
 title_label.pack(pady=20)
+
+auth_frame = ctk.CTkFrame(app)
+auth_frame.pack(pady=5, padx=20, fill="x")
+login_status_label = ctk.CTkLabel(auth_frame, text="User: Guest (Guest)", font=("Arial", 11, "bold"))
+login_status_label.pack(side="left", padx=8)
+btn_logout = ctk.CTkButton(auth_frame, text="Logout", command=logout_user, width=100, fg_color="#FF5722", hover_color="#E64A19")
+btn_logout.pack(side="right", padx=8)
 
 # --- DOCTOR MANAGEMENT ---
 doctors_frame = ctk.CTkFrame(app)
@@ -1168,6 +1556,12 @@ btn_patient_details.pack(side="left", padx=5)
 
 btn_register_patient = ctk.CTkButton(patient_frame, text="Register New", command=open_registration_window, height=40, font=("Arial", 12), width=150, fg_color="#4CAF50", hover_color="#45a049")
 btn_register_patient.pack(side="left", padx=5)
+
+btn_complete_profile = ctk.CTkButton(patient_frame, text="View Complete Patient Profile", command=open_complete_profile_window, height=40, font=("Arial", 12), width=220, fg_color="#673AB7", hover_color="#512DA8")
+btn_complete_profile.pack(side="left", padx=5)
+
+btn_delete_patient = ctk.CTkButton(patient_frame, text="Delete Patient", command=open_delete_patient_window, height=40, font=("Arial", 12), width=150, fg_color="#F44336", hover_color="#d32f2f")
+btn_delete_patient.pack(side="left", padx=5)
 
 # --- ROOM ALLOCATION ---
 room_frame = ctk.CTkFrame(app)
@@ -1211,6 +1605,9 @@ btn_vitals_search.pack(side="left", padx=5)
 # --- OUTPUT TEXTBOX ---
 textbox = ctk.CTkTextbox(app, width=600, height=300, font=("Courier", 11))
 textbox.pack(pady=20, padx=20, fill="both", expand=True)
+
+update_auth_ui()
+show_login_window()
 
 # --- 4. RUN THE APP ---
 if __name__ == "__main__":
