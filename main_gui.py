@@ -15,7 +15,6 @@ session = {"is_authenticated": False, "username": "Guest"}
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin123"
 MAX_VITALS_HISTORY_ROWS = 20
-RECORDED_AT_COLUMN_CHARS = 12
 btn_delete_patient = None
 btn_complete_profile = None
 login_status_label = None
@@ -585,7 +584,7 @@ class CompletePatientView:
         self.text_box.insert("end", "╔" + "═" * 118 + "╗\n")
         self.text_box.insert("end", f"║ {'COMPLETE PATIENT PROFILE'.center(118)} ║\n")
         self.text_box.insert("end", "╠" + "═" * 118 + "╣\n")
-        self.text_box.insert("end", f"║ Patient ID: {patient[0]:<10} Name: {full_name:<40} Username Access: {session['username']:<20} ║\n")
+        self.text_box.insert("end", f"║ Patient ID: {patient[0]:<10} Name: {full_name:<40} Viewing User: {session['username']:<22} ║\n")
         self.text_box.insert("end", "╚" + "═" * 118 + "╝\n\n")
 
         self.text_box.insert("end", "📌 PERSONAL INFORMATION\n")
@@ -644,15 +643,23 @@ class CompletePatientView:
             self.text_box.insert("end", "Latest → N/A\n")
 
         if data["vitals_history"]:
-            self.text_box.insert("end", "┌─────────┬────────────┬───────────────┬───────────────┬──────────────┬──────────────┐\n")
-            self.text_box.insert("end", "│ Vital ID │ Admission  │ BP Sys / Dia  │ Heart Rate    │ Sugar Level  │ Recorded At   │\n")
-            self.text_box.insert("end", "├─────────┼────────────┼───────────────┼───────────────┼──────────────┼──────────────┤\n")
+            self.text_box.insert("end", "┌─────────┬────────────┬───────────────┬───────────────┬──────────────┬──────────────────┐\n")
+            self.text_box.insert("end", "│ Vital ID │ Admission  │ BP Sys / Dia  │ Heart Rate    │ Sugar Level  │ Recorded At      │\n")
+            self.text_box.insert("end", "├─────────┼────────────┼───────────────┼───────────────┼──────────────┼──────────────────┤\n")
             for row in data["vitals_history"][:MAX_VITALS_HISTORY_ROWS]:
+                recorded_at = self._fmt_datetime(row[6])
                 self.text_box.insert(
                     "end",
-                    f"│ {str(row[0]):<7} │ {str(row[1]):<10} │ {str(row[2])+'/'+str(row[3]):<13} │ {str(row[4]):<13} │ {str(row[5]):<12} │ {self._fmt_datetime(row[6])[:RECORDED_AT_COLUMN_CHARS]:<12} │\n",
+                    f"│ {str(row[0]):<7} │ {str(row[1]):<10} │ {str(row[2])+'/'+str(row[3]):<13} │ {str(row[4]):<13} │ {str(row[5]):<12} │ {recorded_at:<16} │\n",
                 )
-            self.text_box.insert("end", "└─────────┴────────────┴───────────────┴───────────────┴──────────────┴──────────────┘\n\n")
+            self.text_box.insert("end", "└─────────┴────────────┴───────────────┴───────────────┴──────────────┴──────────────────┘\n")
+            if len(data["vitals_history"]) > MAX_VITALS_HISTORY_ROWS:
+                self.text_box.insert(
+                    "end",
+                    f"ℹ️ Showing latest {MAX_VITALS_HISTORY_ROWS} of {len(data['vitals_history'])} vital records.\n\n",
+                )
+            else:
+                self.text_box.insert("end", "\n")
         else:
             self.text_box.insert("end", "ℹ️ No vitals history.\n\n")
 
@@ -794,7 +801,12 @@ def open_delete_patient_window():
             result_label.configure(text="❌ Patient ID must be a number.", text_color="#FF6B6B")
             return
 
-        success, message, dependency_counts = db.delete_patient(patient_id, confirm_cascade=False)
+        dependency_counts = db.get_patient_dependency_counts(patient_id)
+        success, message, dependency_counts = db.delete_patient(
+            patient_id,
+            confirm_cascade=False,
+            dependency_counts=dependency_counts,
+        )
         if not success and dependency_counts:
             confirm_message = (
                 "This will delete all patient records including admissions, vitals, and prescriptions.\n\n"
@@ -808,7 +820,11 @@ def open_delete_patient_window():
             if not confirmed:
                 result_label.configure(text="ℹ️ Deletion cancelled.", text_color="#FF9800")
                 return
-            success, message, _ = db.delete_patient(patient_id, confirm_cascade=True)
+            success, message, _ = db.delete_patient(
+                patient_id,
+                confirm_cascade=True,
+                dependency_counts=dependency_counts,
+            )
 
         if success:
             result_label.configure(text=message, text_color="#4CAF50")

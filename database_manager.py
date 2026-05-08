@@ -985,7 +985,7 @@ def get_patient_dependency_counts(patient_id):
         return None
 
 
-def delete_patient(patient_id, confirm_cascade=False):
+def delete_patient(patient_id, confirm_cascade=False, dependency_counts=None):
     """
     Deletes a patient. If dependent records exist, confirm_cascade must be True to proceed.
     Cascades deletion of vitals, prescriptions, and admissions before deleting the patient.
@@ -1003,26 +1003,27 @@ def delete_patient(patient_id, confirm_cascade=False):
             conn.close()
             return False, f"❌ Patient ID {patient_id} not found.", None
 
-        cursor.execute("SELECT COUNT(*) FROM Admissions WHERE patient_id = %s", (patient_id,))
-        admissions_count = cursor.fetchone()[0]
-        cursor.execute(
-            """
-            SELECT COUNT(*)
-            FROM Diagnoses_and_Vitals dv
-            JOIN Admissions a ON dv.admission_id = a.admission_id
-            WHERE a.patient_id = %s
-            """,
-            (patient_id,),
-        )
-        vitals_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM Prescriptions WHERE patient_id = %s", (patient_id,))
-        prescriptions_count = cursor.fetchone()[0]
+        if dependency_counts is None:
+            cursor.execute("SELECT COUNT(*) FROM Admissions WHERE patient_id = %s", (patient_id,))
+            admissions_count = cursor.fetchone()[0]
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM Diagnoses_and_Vitals dv
+                JOIN Admissions a ON dv.admission_id = a.admission_id
+                WHERE a.patient_id = %s
+                """,
+                (patient_id,),
+            )
+            vitals_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM Prescriptions WHERE patient_id = %s", (patient_id,))
+            prescriptions_count = cursor.fetchone()[0]
 
-        dependency_counts = {
-            "admissions": admissions_count,
-            "vitals": vitals_count,
-            "prescriptions": prescriptions_count,
-        }
+            dependency_counts = {
+                "admissions": admissions_count,
+                "vitals": vitals_count,
+                "prescriptions": prescriptions_count,
+            }
 
         if any(dependency_counts.values()) and not confirm_cascade:
             cursor.close()
