@@ -952,6 +952,217 @@ def get_prescription_details(prescription_id):
         return None
 
 
+def calculate_bed_charges(patient_id):
+    """
+    Calculates bed charges for all admissions of a patient.
+    Formula: total_admission_days * 5000 PKR.
+    """
+    BED_DAILY_RATE = 5000.0
+    try:
+        conn = create_connection()
+        if conn is None:
+            return 0.0
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT COALESCE(
+                SUM(
+                    GREATEST(
+                        DATEDIFF(COALESCE(discharge_date, CURDATE()), admission_date),
+                        1
+                    )
+                ),
+                0
+            )
+            FROM Admissions
+            WHERE patient_id = %s
+            """,
+            (patient_id,),
+        )
+        total_days = cursor.fetchone()[0] or 0
+        cursor.close()
+        conn.close()
+        return float(total_days) * BED_DAILY_RATE
+    except Error as e:
+        print(f"❌ Error calculating bed charges: {e}")
+        return 0.0
+
+
+def calculate_medicine_charges(patient_id):
+    """Calculates medicine charges from all patient prescriptions."""
+    try:
+        conn = create_connection()
+        if conn is None:
+            return 0.0
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT COALESCE(SUM(pi.unit_price), 0)
+            FROM Prescriptions p
+            JOIN Pharmacy_Inventory pi ON p.inventory_id = pi.inventory_id
+            WHERE p.patient_id = %s
+            """,
+            (patient_id,),
+        )
+        amount = cursor.fetchone()[0] or 0
+        cursor.close()
+        conn.close()
+        return float(amount)
+    except Error as e:
+        print(f"❌ Error calculating medicine charges: {e}")
+        return 0.0
+
+
+def calculate_test_charges(patient_id):
+    """Calculates diagnostic/vitals charges for a patient."""
+    TEST_RECORD_RATE = 500.0
+    try:
+        conn = create_connection()
+        if conn is None:
+            return 0.0
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM Diagnoses_and_Vitals dv
+            JOIN Admissions a ON dv.admission_id = a.admission_id
+            WHERE a.patient_id = %s
+            """,
+            (patient_id,),
+        )
+        records_count = cursor.fetchone()[0] or 0
+        cursor.close()
+        conn.close()
+        return float(records_count) * TEST_RECORD_RATE
+    except Error as e:
+        print(f"❌ Error calculating test charges: {e}")
+        return 0.0
+
+
+def generate_bill(patient_id, payment_status="Pending"):
+    """
+    Generates a bill by calculating bed, medicine, and test charges.
+    Returns: (success: bool, message: str)
+    """
+    try:
+        conn = create_connection()
+        if conn is None:
+            return False, "❌ Database connection failed."
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT CONCAT(first_name, ' ', last_name) FROM Patients WHERE patient_id = %s",
+            (patient_id,),
+        )
+        patient_row = cursor.fetchone()
+        if not patient_row:
+            cursor.close()
+            conn.close()
+            return False, f"❌ Patient ID {patient_id} not found."
+
+        bed_charges = calculate_bed_charges(patient_id)
+        medicine_charges = calculate_medicine_charges(patient_id)
+        test_charges = calculate_test_charges(patient_id)
+        total_amount = round(bed_charges + medicine_charges + test_charges, 2)
+
+        cursor.execute(
+            """
+            INSERT INTO Bills (patient_id, amount, payment_status, issue_date, due_date)
+            VALUES (%s, %s, %s, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 7 DAY))
+            """,
+            (patient_id, total_amount, payment_status),
+        )
+        conn.commit()
+        bill_id = cursor.lastrowid
+        cursor.close()
+        conn.close()
+        return (
+            True,
+            f"✅ Bill #{bill_id} generated for {patient_row[0]} | Total: PKR {total_amount:.2f}",
+        )
+    except Error as e:
+        print(f"❌ Error generating bill: {e}")
+        return False, f"❌ Error: {e}"
+
+
+def get_patient_bill(patient_id):
+    """Fetches latest bill and itemized charges for a patient."""
+    try:
+        conn = create_connection()
+        if conn is None:
+            return None
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                b.bill_id,
+                b.patient_id,
+                CONCAT(p.first_name, ' ', p.last_name) AS patient_name,
+                b.amount,
+                b.payment_status,
+                b.issue_date,
+                b.due_date
+            FROM Bills b
+            JOIN Patients p ON b.patient_id = p.patient_id
+            WHERE b.patient_id = %s
+            ORDER BY b.issue_date DESC, b.bill_id DESC
+            LIMIT 1
+            """,
+            (patient_id,),
+        )
+        bill = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not bill:
+            return None
+
+        bed_charges = round(calculate_bed_charges(patient_id), 2)
+        medicine_charges = round(calculate_medicine_charges(patient_id), 2)
+        test_charges = round(calculate_test_charges(patient_id), 2)
+        return {
+            "bill": bill,
+            "bed_charges": bed_charges,
+            "medicine_charges": medicine_charges,
+            "test_charges": test_charges,
+            "total_charges": round(bed_charges + medicine_charges + test_charges, 2),
+        }
+    except Error as e:
+        print(f"❌ Error fetching patient bill: {e}")
+        return None
+
+
+def get_all_bills():
+    """Fetches all bills in the system."""
+    try:
+        conn = create_connection()
+        if conn is None:
+            return []
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                b.bill_id,
+                b.patient_id,
+                CONCAT(p.first_name, ' ', p.last_name) AS patient_name,
+                b.amount,
+                b.payment_status,
+                b.issue_date,
+                b.due_date
+            FROM Bills b
+            JOIN Patients p ON b.patient_id = p.patient_id
+            ORDER BY b.issue_date DESC, b.bill_id DESC
+            """
+        )
+        bills = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return bills if bills else []
+    except Error as e:
+        print(f"❌ Error fetching all bills: {e}")
+        return []
+
+
 def get_patient_dependency_counts(patient_id):
     """Returns dependency counts for a patient (admissions, vitals, prescriptions)."""
     try:
