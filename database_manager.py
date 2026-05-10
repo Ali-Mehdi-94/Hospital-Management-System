@@ -1245,7 +1245,8 @@ def delete_patient(patient_id, confirm_cascade=False, dependency_counts=None):
                 dependency_counts,
             )
 
-        conn.start_transaction()
+        if not conn.in_transaction:
+            conn.start_transaction()
 
         cursor.execute(
             """
@@ -1318,82 +1319,98 @@ def get_complete_patient_profile_data(patient_id):
                 conn.close()
                 return None
 
-        cursor.execute(
-            """
-            SELECT
-                a.admission_id,
-                a.admission_date,
-                a.discharge_date,
-                a.bed_id,
-                w.ward_name,
-                w.ward_type
-            FROM Admissions a
-            LEFT JOIN Beds b ON a.bed_id = b.bed_id
-            LEFT JOIN Wards w ON b.ward_id = w.ward_id
-            WHERE a.patient_id = %s AND a.discharge_date IS NULL
-            ORDER BY a.admission_date DESC
-            """,
-            (patient_id,),
-        )
-        active_admissions = cursor.fetchall()
+        active_admissions = []
+        try:
+            cursor.execute(
+                """
+                SELECT
+                    a.admission_id,
+                    a.admission_date,
+                    a.discharge_date,
+                    a.bed_id,
+                    w.ward_name,
+                    w.ward_type
+                FROM Admissions a
+                LEFT JOIN Beds b ON a.bed_id = b.bed_id
+                LEFT JOIN Wards w ON b.ward_id = w.ward_id
+                WHERE a.patient_id = %s AND a.discharge_date IS NULL
+                ORDER BY a.admission_date DESC
+                """,
+                (patient_id,),
+            )
+            active_admissions = cursor.fetchall()
+        except Error:
+            active_admissions = []
 
-        cursor.execute(
-            """
-            SELECT
-                a.admission_id,
-                a.admission_date,
-                a.discharge_date,
-                a.bed_id,
-                w.ward_name,
-                w.ward_type
-            FROM Admissions a
-            LEFT JOIN Beds b ON a.bed_id = b.bed_id
-            LEFT JOIN Wards w ON b.ward_id = w.ward_id
-            WHERE a.patient_id = %s
-            ORDER BY a.admission_date DESC
-            """,
-            (patient_id,),
-        )
-        admission_history = cursor.fetchall()
+        admission_history = []
+        try:
+            cursor.execute(
+                """
+                SELECT
+                    a.admission_id,
+                    a.admission_date,
+                    a.discharge_date,
+                    a.bed_id,
+                    w.ward_name,
+                    w.ward_type
+                FROM Admissions a
+                LEFT JOIN Beds b ON a.bed_id = b.bed_id
+                LEFT JOIN Wards w ON b.ward_id = w.ward_id
+                WHERE a.patient_id = %s
+                ORDER BY a.admission_date DESC
+                """,
+                (patient_id,),
+            )
+            admission_history = cursor.fetchall()
+        except Error:
+            admission_history = []
 
-        cursor.execute(
-            """
-            SELECT
-                dv.vital_id,
-                dv.admission_id,
-                dv.blood_pressure_sys,
-                dv.blood_pressure_dia,
-                dv.heart_beat,
-                dv.sugar_level,
-                dv.recorded_time
-            FROM Diagnoses_and_Vitals dv
-            JOIN Admissions a ON dv.admission_id = a.admission_id
-            WHERE a.patient_id = %s
-            ORDER BY dv.recorded_time DESC
-            """,
-            (patient_id,),
-        )
-        vitals_history = cursor.fetchall()
+        vitals_history = []
+        try:
+            cursor.execute(
+                """
+                SELECT
+                    dv.vital_id,
+                    dv.admission_id,
+                    dv.blood_pressure_sys,
+                    dv.blood_pressure_dia,
+                    dv.heart_beat,
+                    dv.sugar_level,
+                    dv.recorded_time
+                FROM Diagnoses_and_Vitals dv
+                JOIN Admissions a ON dv.admission_id = a.admission_id
+                WHERE a.patient_id = %s
+                ORDER BY dv.recorded_time DESC
+                """,
+                (patient_id,),
+            )
+            vitals_history = cursor.fetchall()
+        except Error:
+            vitals_history = []
         latest_vitals = vitals_history[0] if vitals_history else None
 
-        cursor.execute(
-            """
-            SELECT
-                p.prescription_id,
-                pi.medicine_name,
-                CONCAT(d.first_name, ' ', d.last_name) AS doctor_name,
-                p.dosage,
-                p.duration,
-                p.prescribed_date
-            FROM Prescriptions p
-            LEFT JOIN Pharmacy_Inventory pi ON p.inventory_id = pi.inventory_id
-            LEFT JOIN Doctors d ON p.doctor_id = d.doctor_id
-            WHERE p.patient_id = %s
-            ORDER BY p.prescribed_date DESC
-            """,
-            (patient_id,),
-        )
-        prescriptions = cursor.fetchall()
+        prescriptions = []
+        try:
+            cursor.execute(
+                """
+                SELECT
+                    p.prescription_id,
+                    pi.medicine_name,
+                    CONCAT(d.first_name, ' ', d.last_name) AS doctor_name,
+                    p.dosage,
+                    p.duration,
+                    p.prescribed_date
+                FROM Prescriptions p
+                LEFT JOIN Pharmacy_Inventory pi ON p.inventory_id = pi.inventory_id
+                LEFT JOIN Doctors d ON p.doctor_id = d.doctor_id
+                WHERE p.patient_id = %s
+                ORDER BY p.prescribed_date DESC
+                """,
+                (patient_id,),
+            )
+            prescriptions = cursor.fetchall()
+        except Error:
+            prescriptions = []
 
         bills = []
         try:
