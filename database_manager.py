@@ -1,5 +1,6 @@
 import mysql.connector
 from mysql.connector import Error
+from datetime import date, timedelta
 
 def create_connection():
     """Establishes and returns a secure connection to the hospital database."""
@@ -1161,6 +1162,259 @@ def get_all_bills():
     except Error as e:
         print(f"❌ Error fetching all bills: {e}")
         return []
+
+
+def get_patient_statistics():
+    """Returns aggregate statistics for patient records."""
+    try:
+        conn = create_connection()
+        if conn is None:
+            return {
+                "total_patients": 0,
+                "male_patients": 0,
+                "female_patients": 0,
+                "registered_last_30_days": 0,
+            }
+
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) AS total_patients,
+                SUM(CASE WHEN LOWER(gender) = 'male' THEN 1 ELSE 0 END) AS male_patients,
+                SUM(CASE WHEN LOWER(gender) = 'female' THEN 1 ELSE 0 END) AS female_patients
+            FROM Patients
+            """
+        )
+        totals_row = cursor.fetchone() or (0, 0, 0)
+
+        registered_last_30_days = 0
+        thirty_days_ago = date.today() - timedelta(days=30)
+        try:
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM Patients
+                WHERE created_at >= %s
+                """,
+                (thirty_days_ago,),
+            )
+            registered_last_30_days = cursor.fetchone()[0] or 0
+        except Error:
+            # Fallback for schemas that use registration_date instead of created_at
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM Patients
+                WHERE registration_date >= %s
+                """,
+                (thirty_days_ago,),
+            )
+            registered_last_30_days = cursor.fetchone()[0] or 0
+
+        cursor.close()
+        conn.close()
+        return {
+            "total_patients": totals_row[0] or 0,
+            "male_patients": totals_row[1] or 0,
+            "female_patients": totals_row[2] or 0,
+            "registered_last_30_days": registered_last_30_days or 0,
+        }
+    except Error as e:
+        print(f"❌ Error fetching patient statistics: {e}")
+        return {
+            "total_patients": 0,
+            "male_patients": 0,
+            "female_patients": 0,
+            "registered_last_30_days": 0,
+        }
+
+
+def get_admission_statistics():
+    """Returns aggregate statistics for admissions."""
+    try:
+        conn = create_connection()
+        if conn is None:
+            return {
+                "total_admissions": 0,
+                "active_admissions": 0,
+                "discharged_admissions": 0,
+                "most_used_ward": "N/A",
+                "most_used_ward_count": 0,
+            }
+
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) AS total_admissions,
+                SUM(CASE WHEN discharge_date IS NULL THEN 1 ELSE 0 END) AS active_admissions,
+                SUM(CASE WHEN discharge_date IS NOT NULL THEN 1 ELSE 0 END) AS discharged_admissions
+            FROM Admissions
+            """
+        )
+        row = cursor.fetchone() or (0, 0, 0)
+
+        cursor.execute(
+            """
+            SELECT
+                w.ward_name,
+                COUNT(*) AS admission_count
+            FROM Admissions a
+            JOIN Beds b ON a.bed_id = b.bed_id
+            JOIN Wards w ON b.ward_id = w.ward_id
+            GROUP BY w.ward_name
+            ORDER BY admission_count DESC, w.ward_name ASC
+            LIMIT 1
+            """
+        )
+        top_ward = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
+
+        return {
+            "total_admissions": row[0] or 0,
+            "active_admissions": row[1] or 0,
+            "discharged_admissions": row[2] or 0,
+            "most_used_ward": top_ward[0] if top_ward else "N/A",
+            "most_used_ward_count": top_ward[1] if top_ward else 0,
+        }
+    except Error as e:
+        print(f"❌ Error fetching admission statistics: {e}")
+        return {
+            "total_admissions": 0,
+            "active_admissions": 0,
+            "discharged_admissions": 0,
+            "most_used_ward": "N/A",
+            "most_used_ward_count": 0,
+        }
+
+
+def get_vitals_statistics():
+    """Returns aggregate vitals analytics across all records."""
+    try:
+        conn = create_connection()
+        if conn is None:
+            return {
+                "total_vitals_records": 0,
+                "avg_bp_sys": 0.0,
+                "avg_bp_dia": 0.0,
+                "avg_heart_rate": 0.0,
+                "avg_sugar": 0.0,
+            }
+
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) AS total_vitals_records,
+                AVG(blood_pressure_sys) AS avg_bp_sys,
+                AVG(blood_pressure_dia) AS avg_bp_dia,
+                AVG(heart_beat) AS avg_heart_rate,
+                AVG(sugar_level) AS avg_sugar
+            FROM Diagnoses_and_Vitals
+            """
+        )
+        row = cursor.fetchone() or (0, 0, 0, 0, 0)
+        cursor.close()
+        conn.close()
+        return {
+            "total_vitals_records": row[0] or 0,
+            "avg_bp_sys": float(row[1] or 0.0),
+            "avg_bp_dia": float(row[2] or 0.0),
+            "avg_heart_rate": float(row[3] or 0.0),
+            "avg_sugar": float(row[4] or 0.0),
+        }
+    except Error as e:
+        print(f"❌ Error fetching vitals statistics: {e}")
+        return {
+            "total_vitals_records": 0,
+            "avg_bp_sys": 0.0,
+            "avg_bp_dia": 0.0,
+            "avg_heart_rate": 0.0,
+            "avg_sugar": 0.0,
+        }
+
+
+def get_pharmacy_statistics():
+    """Returns aggregate statistics for pharmacy inventory."""
+    try:
+        conn = create_connection()
+        if conn is None:
+            return {
+                "total_medicines": 0,
+                "low_stock_count": 0,
+                "total_inventory_value": 0.0,
+            }
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) AS total_medicines,
+                SUM(CASE WHEN stock_quantity < %s THEN 1 ELSE 0 END) AS low_stock_count,
+                SUM(stock_quantity * unit_price) AS total_inventory_value
+            FROM Pharmacy_Inventory
+            """,
+            (5,),
+        )
+        row = cursor.fetchone() or (0, 0, 0)
+        cursor.close()
+        conn.close()
+        return {
+            "total_medicines": row[0] or 0,
+            "low_stock_count": row[1] or 0,
+            "total_inventory_value": float(row[2] or 0.0),
+        }
+    except Error as e:
+        print(f"❌ Error fetching pharmacy statistics: {e}")
+        return {
+            "total_medicines": 0,
+            "low_stock_count": 0,
+            "total_inventory_value": 0.0,
+        }
+
+
+def get_billing_statistics():
+    """Returns aggregate statistics for billing and revenue."""
+    try:
+        conn = create_connection()
+        if conn is None:
+            return {
+                "total_bills": 0,
+                "total_revenue": 0.0,
+                "pending_bills": 0,
+                "paid_bills": 0,
+            }
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) AS total_bills,
+                SUM(amount) AS total_revenue,
+                SUM(CASE WHEN LOWER(payment_status) = %s THEN 1 ELSE 0 END) AS pending_bills,
+                SUM(CASE WHEN LOWER(payment_status) = %s THEN 1 ELSE 0 END) AS paid_bills
+            FROM Bills
+            """,
+            ("pending", "paid"),
+        )
+        row = cursor.fetchone() or (0, 0, 0, 0)
+        cursor.close()
+        conn.close()
+        return {
+            "total_bills": row[0] or 0,
+            "total_revenue": float(row[1] or 0.0),
+            "pending_bills": row[2] or 0,
+            "paid_bills": row[3] or 0,
+        }
+    except Error as e:
+        print(f"❌ Error fetching billing statistics: {e}")
+        return {
+            "total_bills": 0,
+            "total_revenue": 0.0,
+            "pending_bills": 0,
+            "paid_bills": 0,
+        }
 
 
 def get_patient_dependency_counts(patient_id):

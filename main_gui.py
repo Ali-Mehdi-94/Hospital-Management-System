@@ -1,5 +1,6 @@
 import customtkinter as ctk
 from tkinter import messagebox
+from datetime import datetime
 import database_manager as db
 
 # --- 1. SET UP THE MAIN WINDOW ---
@@ -754,6 +755,101 @@ class BillingView:
         self._write(f"║ Pending Bills         : {pending_bills:<45} ║\n")
         self._write("╚" + "═" * 80 + "╝\n")
         self._write("\n💰 Payment Status: 🟢 Paid | 🟡 Pending\n")
+        self.text_box.configure(state="disabled")
+
+
+class ReportsView:
+    """Renders reports and analytics in the dashboard textbox."""
+
+    def __init__(self, parent_text_box, database_manager):
+        self.text_box = parent_text_box
+        self.db = database_manager
+
+    def _write(self, text):
+        self.text_box.insert("end", text)
+
+    def _fmt_currency(self, value):
+        return f"PKR {float(value or 0):.2f}"
+
+    def show_hospital_overview(self):
+        patient_stats = self.db.get_patient_statistics()
+        admission_stats = self.db.get_admission_statistics()
+        billing_stats = self.db.get_billing_statistics()
+        generated_on = datetime.now().strftime("%d-%m-%Y")
+
+        self.text_box.configure(state="normal")
+        self.text_box.delete("1.0", "end")
+
+        self._write("╔" + "═" * 100 + "╗\n")
+        self._write("║ " + "HOSPITAL OVERVIEW REPORT".center(98) + " ║\n")
+        self._write(f"║ Generated On: {generated_on:<85} ║\n")
+        self._write("╠" + "═" * 100 + "╣\n")
+        self._write("║ OVERALL TOTALS" + " " * 85 + "║\n")
+        self._write("╟" + "─" * 100 + "╢\n")
+        self._write(f"║ Total Patients            : {patient_stats['total_patients']:<63} ║\n")
+        self._write(f"║ Total Admissions          : {admission_stats['total_admissions']:<63} ║\n")
+        self._write(f"║ Active Admissions         : {admission_stats['active_admissions']:<63} ║\n")
+        self._write(f"║ Total Bills Generated     : {billing_stats['total_bills']:<63} ║\n")
+        self._write(f"║ Total Revenue             : {self._fmt_currency(billing_stats['total_revenue']):<63} ║\n")
+        self._write("╟" + "─" * 100 + "╢\n")
+        self._write("║ QUICK BREAKDOWN" + " " * 84 + "║\n")
+        self._write("╟" + "─" * 100 + "╢\n")
+        self._write(f"║ Male Patients             : {patient_stats['male_patients']:<63} ║\n")
+        self._write(f"║ Female Patients           : {patient_stats['female_patients']:<63} ║\n")
+        self._write(f"║ Registered (Last 30 Days) : {patient_stats['registered_last_30_days']:<63} ║\n")
+        self._write(f"║ Most Used Ward            : {admission_stats['most_used_ward']} ({admission_stats['most_used_ward_count']} admissions){'':<35} ║\n")
+        self._write("╚" + "═" * 100 + "╝\n")
+        self.text_box.configure(state="disabled")
+
+    def show_vitals_analytics(self):
+        stats = self.db.get_vitals_statistics()
+        self.text_box.configure(state="normal")
+        self.text_box.delete("1.0", "end")
+
+        self._write("╔" + "═" * 86 + "╗\n")
+        self._write("║ " + "VITALS ANALYTICS".center(84) + " ║\n")
+        self._write("╠" + "═" * 86 + "╣\n")
+        self._write("║ Metric                         │ Value                                   ║\n")
+        self._write("╟" + "─" * 86 + "╢\n")
+        self._write(f"║ Total Vitals Records           │ {stats['total_vitals_records']:<39} ║\n")
+        self._write(f"║ Average Blood Pressure (Sys)   │ {stats['avg_bp_sys']:.2f} mmHg{'':<28} ║\n")
+        self._write(f"║ Average Blood Pressure (Dia)   │ {stats['avg_bp_dia']:.2f} mmHg{'':<28} ║\n")
+        self._write(f"║ Average Heart Rate             │ {stats['avg_heart_rate']:.2f} bpm{'':<29} ║\n")
+        self._write(f"║ Average Sugar Level            │ {stats['avg_sugar']:.2f} mg/dL{'':<26} ║\n")
+        self._write("╚" + "═" * 86 + "╝\n")
+        self.text_box.configure(state="disabled")
+
+    def show_pharmacy_analytics(self):
+        stats = self.db.get_pharmacy_statistics()
+        self.text_box.configure(state="normal")
+        self.text_box.delete("1.0", "end")
+
+        self._write("╔" + "═" * 86 + "╗\n")
+        self._write("║ " + "PHARMACY ANALYTICS".center(84) + " ║\n")
+        self._write("╠" + "═" * 86 + "╣\n")
+        self._write("║ Metric                         │ Value                                   ║\n")
+        self._write("╟" + "─" * 86 + "╢\n")
+        self._write(f"║ Total Medicines                │ {stats['total_medicines']:<39} ║\n")
+        self._write(f"║ Low Stock Items (<5)           │ {stats['low_stock_count']:<39} ║\n")
+        self._write(f"║ Total Inventory Value          │ {self._fmt_currency(stats['total_inventory_value']):<39} ║\n")
+        self._write("╚" + "═" * 86 + "╝\n")
+        self.text_box.configure(state="disabled")
+
+    def show_billing_analytics(self):
+        stats = self.db.get_billing_statistics()
+        self.text_box.configure(state="normal")
+        self.text_box.delete("1.0", "end")
+
+        self._write("╔" + "═" * 86 + "╗\n")
+        self._write("║ " + "BILLING ANALYTICS".center(84) + " ║\n")
+        self._write("╠" + "═" * 86 + "╣\n")
+        self._write("║ Metric                         │ Value                                   ║\n")
+        self._write("╟" + "─" * 86 + "╢\n")
+        self._write(f"║ Total Bills                    │ {stats['total_bills']:<39} ║\n")
+        self._write(f"║ Total Revenue                  │ {self._fmt_currency(stats['total_revenue']):<39} ║\n")
+        self._write(f"║ Pending Bills                  │ {stats['pending_bills']:<39} ║\n")
+        self._write(f"║ Paid Bills                     │ {stats['paid_bills']:<39} ║\n")
+        self._write("╚" + "═" * 86 + "╝\n")
         self.text_box.configure(state="disabled")
 
 
@@ -1853,6 +1949,30 @@ def show_billing_summary():
     billing_view.show_billing_summary()
 
 
+def show_hospital_overview():
+    """Displays combined hospital overview analytics."""
+    reports_view = ReportsView(textbox, db)
+    reports_view.show_hospital_overview()
+
+
+def show_vitals_analytics():
+    """Displays overall vitals analytics report."""
+    reports_view = ReportsView(textbox, db)
+    reports_view.show_vitals_analytics()
+
+
+def show_pharmacy_analytics():
+    """Displays overall pharmacy analytics report."""
+    reports_view = ReportsView(textbox, db)
+    reports_view.show_pharmacy_analytics()
+
+
+def show_billing_analytics():
+    """Displays overall billing analytics report."""
+    reports_view = ReportsView(textbox, db)
+    reports_view.show_billing_analytics()
+
+
 def update_auth_ui():
     """Updates UI controls based on current authentication state."""
     if login_status_label is not None:
@@ -2057,6 +2177,24 @@ btn_view_all_bills.pack(side="left", padx=5)
 
 btn_billing_summary = ctk.CTkButton(billing_frame, text="Billing Summary Report", command=show_billing_summary, height=40, font=("Arial", 12), width=190, fg_color="#FF9800", hover_color="#e68900")
 btn_billing_summary.pack(side="left", padx=5)
+
+# --- REPORTS & ANALYTICS ---
+reports_frame = ctk.CTkFrame(app)
+reports_frame.pack(pady=10, padx=20, fill="x")
+
+ctk.CTkLabel(reports_frame, text="📊 REPORTS & ANALYTICS", font=("Arial", 12, "bold")).pack(side="left", padx=5)
+
+btn_hospital_overview = ctk.CTkButton(reports_frame, text="Hospital Overview", command=show_hospital_overview, height=40, font=("Arial", 12), width=170, fg_color="#3F51B5", hover_color="#303F9F")
+btn_hospital_overview.pack(side="left", padx=5)
+
+btn_vitals_analytics = ctk.CTkButton(reports_frame, text="Vitals Analytics", command=show_vitals_analytics, height=40, font=("Arial", 12), width=160, fg_color="#009688", hover_color="#00796B")
+btn_vitals_analytics.pack(side="left", padx=5)
+
+btn_pharmacy_analytics = ctk.CTkButton(reports_frame, text="Pharmacy Analytics", command=show_pharmacy_analytics, height=40, font=("Arial", 12), width=170, fg_color="#795548", hover_color="#5D4037")
+btn_pharmacy_analytics.pack(side="left", padx=5)
+
+btn_billing_analytics = ctk.CTkButton(reports_frame, text="Billing Analytics", command=show_billing_analytics, height=40, font=("Arial", 12), width=160, fg_color="#E91E63", hover_color="#C2185B")
+btn_billing_analytics.pack(side="left", padx=5)
 
 # --- OUTPUT TEXTBOX ---
 textbox = ctk.CTkTextbox(app, width=600, height=300, font=("Courier", 11))
