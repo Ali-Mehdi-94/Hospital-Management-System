@@ -1299,7 +1299,9 @@ def get_billing_statistics():
         }
     except Error as e:
         error_text = str(e).lower()
-        if "doesn't exist" in error_text and "bills" in error_text:
+        error_code = getattr(e, "errno", None)
+        is_missing_bills_table = error_code == 1146 or ("doesn't exist" in error_text and "bills" in error_text)
+        if is_missing_bills_table:
             print("ℹ️ Bills table is unavailable. Returning zeroed billing statistics.")
             return {
                 "total_bills": 0,
