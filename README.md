@@ -5,6 +5,8 @@
 
 ### Phase 1–4: Doctor & Patient Management
 - **View All Doctors** – List all doctors with their specialization and department
+- **Add Doctor** – Register a new doctor with specialization and department
+- **Delete Doctor** – Remove a doctor (with linked prescription cleanup confirmation)
 - **Register New Patient** – Add a new patient to the database
 - **View All Patients** – Display all patients in a formatted ASCII table
 - **Search Patient** – Search by name or phone number
