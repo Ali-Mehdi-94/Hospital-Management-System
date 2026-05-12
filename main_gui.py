@@ -1050,6 +1050,13 @@ def open_add_doctor_window():
     ctk.CTkLabel(add_window, text="Department:", anchor="w").pack(fill="x", padx=30, pady=(6, 0))
     if not departments:
         ctk.CTkLabel(add_window, text="❌ No departments found.", text_color="#FF6B6B").pack(pady=10)
+        ctk.CTkButton(
+            add_window,
+            text="Close",
+            command=add_window.destroy,
+            fg_color="#607D8B",
+            hover_color="#455A64",
+        ).pack(pady=10)
         return
 
     department_options = [f"{dept[0]} - {dept[1]}" for dept in departments]

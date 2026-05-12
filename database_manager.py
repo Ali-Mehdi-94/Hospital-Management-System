@@ -140,9 +140,6 @@ def delete_doctor(doctor_id, confirm_cascade=False, dependency_counts=None):
                 dependency_counts,
             )
 
-        if not conn.in_transaction:
-            conn.start_transaction()
-
         cursor.execute("DELETE FROM Prescriptions WHERE doctor_id = %s", (doctor_id,))
         cursor.execute("DELETE FROM Doctors WHERE doctor_id = %s", (doctor_id,))
         conn.commit()
