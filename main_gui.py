@@ -16,6 +16,8 @@ session = {"is_authenticated": False, "username": "Guest"}
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin123"
 btn_delete_patient = None
+btn_add_doctor = None
+btn_delete_doctor = None
 btn_complete_profile = None
 login_status_label = None
 btn_logout = None
@@ -1008,15 +1010,166 @@ class CompletePatientView:
 # --- 2. DEFINE BUTTON ACTIONS ---
 
 def show_doctors():
+    textbox.configure(state="normal")
     textbox.delete("1.0", "end")
     doctor_list = db.get_all_doctors()
     
     if doctor_list:
         for doc in doctor_list:
-            formatted_text = f"Dr. {doc[ 0 ]} {doc[ 1 ]} | Specialist: {doc[ 2 ]} | Ward: {doc[ 3 ]}\n"
+            formatted_text = f"Dr. {doc[ 0 ]} {doc[ 1 ]} | Specialist: {doc[ 2 ]} | Department: {doc[ 3 ]}\n"
             textbox.insert("end", formatted_text)
     else:
         textbox.insert("end", "No doctors found or database connection failed.")
+    textbox.configure(state="disabled")
+
+
+def open_add_doctor_window():
+    """Opens a popup to register a new doctor."""
+    if not require_admin_access("Add Doctor"):
+        return
+
+    departments = db.get_all_departments()
+    add_window = ctk.CTkToplevel(app)
+    add_window.title("Add Doctor")
+    add_window.geometry("500x360")
+    add_window.transient(app)
+    add_window.grab_set()
+
+    ctk.CTkLabel(add_window, text="Add New Doctor", font=("Arial", 14, "bold")).pack(pady=10)
+
+    def _make_field(label_text, placeholder):
+        ctk.CTkLabel(add_window, text=label_text, anchor="w").pack(fill="x", padx=30, pady=(6, 0))
+        entry = ctk.CTkEntry(add_window, placeholder_text=placeholder, width=420)
+        entry.pack(padx=30)
+        return entry
+
+    first_name_entry = _make_field("First Name:", "e.g., Ali")
+    last_name_entry = _make_field("Last Name:", "e.g., Khan")
+    specialization_entry = _make_field("Specialization:", "e.g., Cardiology")
+
+    ctk.CTkLabel(add_window, text="Department:", anchor="w").pack(fill="x", padx=30, pady=(6, 0))
+    if not departments:
+        ctk.CTkLabel(add_window, text="❌ No departments found.", text_color="#FF6B6B").pack(pady=10)
+        return
+
+    department_options = [f"{dept[0]} - {dept[1]}" for dept in departments]
+    department_map = {f"{dept[0]} - {dept[1]}": dept[0] for dept in departments}
+    department_dropdown = ctk.CTkComboBox(add_window, values=department_options, width=420)
+    department_dropdown.set(department_options[0])
+    department_dropdown.pack(padx=30, pady=5)
+
+    result_label = ctk.CTkLabel(add_window, text="", font=("Arial", 10))
+    result_label.pack(pady=6)
+
+    def execute_add():
+        first_name = first_name_entry.get().strip()
+        last_name = last_name_entry.get().strip()
+        specialization = specialization_entry.get().strip()
+        selection = department_dropdown.get()
+
+        if not first_name or not last_name or not specialization:
+            result_label.configure(text="❌ First name, last name, and specialization are required.", text_color="#FF6B6B")
+            return
+        if selection not in department_map:
+            result_label.configure(text="❌ Please select a valid department.", text_color="#FF6B6B")
+            return
+
+        success, message = db.insert_new_doctor(
+            first_name=first_name,
+            last_name=last_name,
+            specialization=specialization,
+            department_id=department_map[selection],
+        )
+        if success:
+            result_label.configure(text=message, text_color="#4CAF50")
+            show_doctors()
+            add_window.after(1200, add_window.destroy)
+        else:
+            result_label.configure(text=message, text_color="#FF6B6B")
+
+    ctk.CTkButton(
+        add_window,
+        text="Add Doctor",
+        command=execute_add,
+        fg_color="#4CAF50",
+        hover_color="#45a049",
+        height=38,
+    ).pack(pady=10)
+    first_name_entry.focus()
+
+
+def open_delete_doctor_window():
+    """Opens confirmation flow to delete a doctor with cascade warning."""
+    if not require_admin_access("Delete Doctor"):
+        return
+
+    delete_window = ctk.CTkToplevel(app)
+    delete_window.title("Delete Doctor")
+    delete_window.geometry("500x260")
+    delete_window.transient(app)
+    delete_window.grab_set()
+
+    ctk.CTkLabel(delete_window, text="Delete Doctor Record", font=("Arial", 14, "bold"), text_color="#F44336").pack(pady=10)
+    ctk.CTkLabel(
+        delete_window,
+        text="⚠️ This will delete doctor records including linked prescriptions",
+        wraplength=440,
+        justify="center",
+        text_color="#F44336"
+    ).pack(pady=5)
+    ctk.CTkLabel(delete_window, text="Doctor ID:", anchor="w").pack(fill="x", padx=40, pady=(10, 0))
+    doctor_id_entry = ctk.CTkEntry(delete_window, placeholder_text="e.g., 1", width=400)
+    doctor_id_entry.pack(padx=40, pady=8)
+    doctor_id_entry.focus()
+
+    result_label = ctk.CTkLabel(delete_window, text="", font=("Arial", 10))
+    result_label.pack(pady=5)
+
+    def execute_delete():
+        try:
+            doctor_id = int(doctor_id_entry.get().strip())
+        except ValueError:
+            result_label.configure(text="❌ Doctor ID must be a number.", text_color="#FF6B6B")
+            return
+
+        dependency_counts = db.get_doctor_dependency_counts(doctor_id)
+        success, message, dependency_counts = db.delete_doctor(
+            doctor_id,
+            confirm_cascade=False,
+            dependency_counts=dependency_counts,
+        )
+        if not success and dependency_counts:
+            confirm_message = (
+                "This will delete doctor records including linked prescriptions.\n\n"
+                f"Doctor ID: {doctor_id}\n"
+                f"Prescriptions: {dependency_counts['prescriptions']}\n\n"
+                "Do you want to continue?"
+            )
+            confirmed = messagebox.askyesno("Confirm Cascade Delete", confirm_message)
+            if not confirmed:
+                result_label.configure(text="ℹ️ Deletion cancelled.", text_color="#FF9800")
+                return
+            success, message, _ = db.delete_doctor(
+                doctor_id,
+                confirm_cascade=True,
+                dependency_counts=dependency_counts,
+            )
+
+        if success:
+            result_label.configure(text=message, text_color="#4CAF50")
+            show_doctors()
+            delete_window.after(1200, delete_window.destroy)
+        else:
+            result_label.configure(text=message, text_color="#FF6B6B")
+
+    ctk.CTkButton(
+        delete_window,
+        text="Delete Doctor",
+        command=execute_delete,
+        fg_color="#F44336",
+        hover_color="#d32f2f",
+    ).pack(pady=8)
+    doctor_id_entry.bind("<Return>", lambda e: execute_delete())
 
 def show_patient_list():
     """Handler for 'View All Patients' button."""
@@ -1987,6 +2140,22 @@ def update_auth_ui():
             if btn_delete_patient.winfo_ismapped():
                 btn_delete_patient.pack_forget()
 
+    if btn_add_doctor is not None:
+        if session["is_authenticated"]:
+            if not btn_add_doctor.winfo_ismapped():
+                btn_add_doctor.pack(side="left", padx=5)
+        else:
+            if btn_add_doctor.winfo_ismapped():
+                btn_add_doctor.pack_forget()
+
+    if btn_delete_doctor is not None:
+        if session["is_authenticated"]:
+            if not btn_delete_doctor.winfo_ismapped():
+                btn_delete_doctor.pack(side="left", padx=5)
+        else:
+            if btn_delete_doctor.winfo_ismapped():
+                btn_delete_doctor.pack_forget()
+
 
 def logout_user():
     """Logs out current user and returns to login screen."""
@@ -2079,6 +2248,10 @@ doctors_frame.pack(pady=10, padx=20, fill="x")
 ctk.CTkLabel(doctors_frame, text="👨‍⚕️ DOCTORS", font=("Arial", 12, "bold")).pack(side="left", padx=5)
 btn_view_doctors = ctk.CTkButton(doctors_frame, text="View All Doctors", command=show_doctors, height=40, font=("Arial", 12), width=150)
 btn_view_doctors.pack(side="left", padx=5)
+btn_add_doctor = ctk.CTkButton(doctors_frame, text="Add Doctor", command=open_add_doctor_window, height=40, font=("Arial", 12), width=130, fg_color="#4CAF50", hover_color="#45a049")
+btn_add_doctor.pack(side="left", padx=5)
+btn_delete_doctor = ctk.CTkButton(doctors_frame, text="Delete Doctor", command=open_delete_doctor_window, height=40, font=("Arial", 12), width=140, fg_color="#F44336", hover_color="#d32f2f")
+btn_delete_doctor.pack(side="left", padx=5)
 
 # --- PATIENT MANAGEMENT ---
 patient_frame = ctk.CTkFrame(app)

@@ -38,6 +38,125 @@ def get_all_doctors():
             cursor.close()
             conn.close()
 
+
+def get_all_departments():
+    """Fetches all departments for doctor registration workflows."""
+    try:
+        conn = create_connection()
+        if conn is None:
+            return []
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT department_id, department_name
+            FROM Departments
+            ORDER BY department_name ASC
+            """
+        )
+        departments = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return departments if departments else []
+    except Error as e:
+        print(f"❌ Error fetching departments: {e}")
+        return []
+
+
+def insert_new_doctor(first_name, last_name, specialization, department_id):
+    """Inserts a new doctor after validating the selected department."""
+    try:
+        conn = create_connection()
+        if conn is None:
+            return False, "❌ Database connection failed."
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT department_id FROM Departments WHERE department_id = %s", (department_id,))
+        if cursor.fetchone() is None:
+            cursor.close()
+            conn.close()
+            return False, f"❌ Department ID {department_id} not found."
+
+        cursor.execute(
+            """
+            INSERT INTO Doctors (first_name, last_name, specialization, department_id)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (first_name, last_name, specialization, department_id),
+        )
+        conn.commit()
+        doctor_id = cursor.lastrowid
+        cursor.close()
+        conn.close()
+        return True, f"✅ Doctor added successfully (Doctor ID: {doctor_id})."
+    except Error as e:
+        print(f"❌ Error inserting doctor: {e}")
+        return False, f"❌ Error: {e}"
+
+
+def get_doctor_dependency_counts(doctor_id):
+    """Returns dependency counts for a doctor (prescriptions)."""
+    try:
+        conn = create_connection()
+        if conn is None:
+            return None
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM Prescriptions WHERE doctor_id = %s", (doctor_id,))
+        prescriptions_count = cursor.fetchone()[0]
+        cursor.close()
+        conn.close()
+        return {"prescriptions": prescriptions_count}
+    except Error as e:
+        print(f"❌ Error checking doctor dependencies: {e}")
+        return None
+
+
+def delete_doctor(doctor_id, confirm_cascade=False, dependency_counts=None):
+    """
+    Deletes a doctor. If dependent prescriptions exist, confirm_cascade must be True.
+    Returns: (success: bool, message: str, dependency_counts: dict|None)
+    """
+    try:
+        conn = create_connection()
+        if conn is None:
+            return False, "❌ Database connection failed.", None
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT doctor_id FROM Doctors WHERE doctor_id = %s", (doctor_id,))
+        if cursor.fetchone() is None:
+            cursor.close()
+            conn.close()
+            return False, f"❌ Doctor ID {doctor_id} not found.", None
+
+        if dependency_counts is None:
+            cursor.execute("SELECT COUNT(*) FROM Prescriptions WHERE doctor_id = %s", (doctor_id,))
+            dependency_counts = {"prescriptions": cursor.fetchone()[0]}
+
+        if dependency_counts["prescriptions"] > 0 and not confirm_cascade:
+            cursor.close()
+            conn.close()
+            return (
+                False,
+                "⚠️ Doctor has related prescriptions. Confirmation required for cascade delete.",
+                dependency_counts,
+            )
+
+        if not conn.in_transaction:
+            conn.start_transaction()
+
+        cursor.execute("DELETE FROM Prescriptions WHERE doctor_id = %s", (doctor_id,))
+        cursor.execute("DELETE FROM Doctors WHERE doctor_id = %s", (doctor_id,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True, f"✅ Doctor ID {doctor_id} and related records deleted.", dependency_counts
+    except Error as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"❌ Error deleting doctor: {e}")
+        return False, f"❌ Error: {e}", None
+
 def insert_new_patient(first_name, last_name, dob, gender, phone, address, emergency_contact):
     """Securely inserts a brand new patient into the database."""
     conn = create_connection()
