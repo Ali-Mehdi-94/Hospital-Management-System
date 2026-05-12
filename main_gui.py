@@ -547,109 +547,6 @@ class DiagnosticVitalsView:
         self.text_box.configure(state="disabled")
 
 
-class PharmacyView:
-    """Manages pharmacy inventory and prescriptions display in the dashboard textbox."""
-
-    LOW_STOCK_THRESHOLD = 5
-
-    def __init__(self, parent_text_box, database_manager):
-        self.text_box = parent_text_box
-        self.db = database_manager
-
-    def _write(self, text):
-        self.text_box.insert("end", text)
-
-    def _stock_status(self, quantity):
-        return "🔴 Low Stock" if quantity < self.LOW_STOCK_THRESHOLD else "🟢 Normal Stock"
-
-    def show_inventory(self):
-        self.text_box.configure(state="normal")
-        self.text_box.delete("1.0", "end")
-        inventory = self.db.get_pharmacy_inventory()
-
-        self._write("╔" + "═" * 100 + "╗\n")
-        self._write("║ " + "PHARMACY INVENTORY".center(98) + " ║\n")
-        self._write("╠" + "═" * 100 + "╣\n")
-
-        if not inventory:
-            self._write("║ " + "No pharmacy inventory found.".center(98) + " ║\n")
-            self._write("╚" + "═" * 100 + "╝\n")
-            self.text_box.configure(state="disabled")
-            return
-
-        self._write("║ Inv.ID │ Medicine Name                 │ Stock Qty │ Unit Price (PKR) │ Status          ║\n")
-        self._write("╠" + "═" * 100 + "╣\n")
-
-        for row in inventory:
-            inv_id, medicine_name, stock_qty, unit_price = row
-            status = self._stock_status(stock_qty)
-            self._write(
-                f"║ {str(inv_id):6} │ {str(medicine_name)[:28]:<28} │ {str(stock_qty):9} │ {str(unit_price):16} │ {status:<15} ║\n"
-            )
-
-        self._write("╚" + "═" * 100 + "╝\n")
-        self._write(f"\n💊 Total Medicines: {len(inventory)}\n")
-        self._write("💡 Status: 🔴 Low Stock (<5) | 🟢 Normal Stock\n")
-        self.text_box.configure(state="disabled")
-
-    def show_low_stock_items(self):
-        self.text_box.configure(state="normal")
-        self.text_box.delete("1.0", "end")
-        low_stock = self.db.get_low_stock_items()
-
-        self._write("╔" + "═" * 90 + "╗\n")
-        self._write("║ " + "LOW STOCK ALERT".center(88) + " ║\n")
-        self._write("╠" + "═" * 90 + "╣\n")
-
-        if not low_stock:
-            self._write("║ " + "✅ No low stock items. Inventory levels are healthy.".center(88) + " ║\n")
-            self._write("╚" + "═" * 90 + "╝\n")
-            self.text_box.configure(state="disabled")
-            return
-
-        self._write("║ Inv.ID │ Medicine Name                 │ Stock Qty │ Unit Price (PKR) │ Alert          ║\n")
-        self._write("╠" + "═" * 90 + "╣\n")
-        for row in low_stock:
-            inv_id, medicine_name, stock_qty, unit_price = row
-            self._write(
-                f"║ {str(inv_id):6} │ {str(medicine_name)[:28]:<28} │ {str(stock_qty):9} │ {str(unit_price):16} │ {'🔴 Low Stock':<14} ║\n"
-            )
-
-        self._write("╚" + "═" * 90 + "╝\n")
-        self._write(f"\n⚠️ Low Stock Items: {len(low_stock)}\n")
-        self.text_box.configure(state="disabled")
-
-    def show_patient_prescriptions(self, patient_id):
-        self.text_box.configure(state="normal")
-        self.text_box.delete("1.0", "end")
-        prescriptions = self.db.get_patient_prescriptions(patient_id)
-
-        self._write("╔" + "═" * 118 + "╗\n")
-        self._write("║ " + f"PATIENT PRESCRIPTIONS — Patient ID: {patient_id}".center(116) + " ║\n")
-        self._write("╠" + "═" * 118 + "╣\n")
-
-        if not prescriptions:
-            self._write("║ " + "No prescriptions found for this patient.".center(116) + " ║\n")
-            self._write("╚" + "═" * 118 + "╝\n")
-            self.text_box.configure(state="disabled")
-            return
-
-        self._write(
-            "║ Rx.ID   │ Medicine Name                 │ Prescribed By              │ Dosage            │ Duration      │ Date       ║\n"
-        )
-        self._write("╠" + "═" * 118 + "╣\n")
-        for row in prescriptions:
-            rx_id, med_name, doc_name, dosage, duration, prescribed_date = row
-            date_str = prescribed_date.strftime("%d-%m-%Y") if hasattr(prescribed_date, "strftime") else str(prescribed_date)
-            self._write(
-                f"║ {str(rx_id):7} │ {str(med_name)[:28]:<28} │ {str(doc_name)[:25]:<25} │ {str(dosage)[:17]:<17} │ {str(duration)[:13]:<13} │ {date_str:<10} ║\n"
-            )
-
-        self._write("╚" + "═" * 118 + "╝\n")
-        self._write(f"\n📄 Total Prescriptions: {len(prescriptions)}\n")
-        self.text_box.configure(state="disabled")
-
-
 class BillingView:
     """Manages billing output in the dashboard textbox."""
 
@@ -800,6 +697,10 @@ class ReportsView:
         self._write(f"║ Female Patients           : {patient_stats['female_patients']:<63} ║\n")
         self._write(f"║ Registered (Last 30 Days) : {patient_stats['registered_last_30_days']:<63} ║\n")
         self._write(f"║ Most Used Ward            : {admission_stats['most_used_ward']} ({admission_stats['most_used_ward_count']} admissions){'':<35} ║\n")
+        if patient_stats.get("message"):
+            self._write(f"║ Note: {patient_stats['message'][:91]:<91} ║\n")
+        if billing_stats.get("message"):
+            self._write(f"║ Note: {billing_stats['message'][:91]:<91} ║\n")
         self._write("╚" + "═" * 100 + "╝\n")
         self.text_box.configure(state="disabled")
 
@@ -821,22 +722,6 @@ class ReportsView:
         self._write("╚" + "═" * 86 + "╝\n")
         self.text_box.configure(state="disabled")
 
-    def show_pharmacy_analytics(self):
-        stats = self.db.get_pharmacy_statistics()
-        self.text_box.configure(state="normal")
-        self.text_box.delete("1.0", "end")
-
-        self._write("╔" + "═" * 86 + "╗\n")
-        self._write("║ " + "PHARMACY ANALYTICS".center(84) + " ║\n")
-        self._write("╠" + "═" * 86 + "╣\n")
-        self._write("║ Metric                         │ Value                                   ║\n")
-        self._write("╟" + "─" * 86 + "╢\n")
-        self._write(f"║ Total Medicines                │ {stats['total_medicines']:<39} ║\n")
-        self._write(f"║ Low Stock Items (<5)           │ {stats['low_stock_count']:<39} ║\n")
-        self._write(f"║ Total Inventory Value          │ {self._fmt_currency(stats['total_inventory_value']):<39} ║\n")
-        self._write("╚" + "═" * 86 + "╝\n")
-        self.text_box.configure(state="disabled")
-
     def show_billing_analytics(self):
         stats = self.db.get_billing_statistics()
         self.text_box.configure(state="normal")
@@ -851,6 +736,8 @@ class ReportsView:
         self._write(f"║ Total Revenue                  │ {self._fmt_currency(stats['total_revenue']):<39} ║\n")
         self._write(f"║ Pending Bills                  │ {stats['pending_bills']:<39} ║\n")
         self._write(f"║ Paid Bills                     │ {stats['paid_bills']:<39} ║\n")
+        if stats.get("message"):
+            self._write(f"║ Note                           │ {stats['message'][:39]:<39} ║\n")
         self._write("╚" + "═" * 86 + "╝\n")
         self.text_box.configure(state="disabled")
 
@@ -1895,116 +1782,6 @@ def open_vitals_search_window():
     ).pack(pady=10)
 
 
-def show_pharmacy_inventory():
-    """Displays all medicines and stock levels."""
-    pharmacy_view = PharmacyView(textbox, db)
-    pharmacy_view.show_inventory()
-
-
-def open_create_prescription_window():
-    """Opens a popup to create a new patient prescription."""
-    rx_window = ctk.CTkToplevel(app)
-    rx_window.title("Create New Prescription")
-    rx_window.geometry("500x420")
-    rx_window.transient(app)
-    rx_window.grab_set()
-
-    ctk.CTkLabel(rx_window, text="Create Prescription", font=("Arial", 14, "bold")).pack(pady=10)
-
-    def _make_field(label_text, placeholder):
-        ctk.CTkLabel(rx_window, text=label_text, anchor="w").pack(fill="x", padx=30, pady=(6, 0))
-        entry = ctk.CTkEntry(rx_window, placeholder_text=placeholder, width=420)
-        entry.pack(padx=30)
-        return entry
-
-    patient_id_entry = _make_field("Patient ID:", "e.g., 1")
-    doctor_id_entry = _make_field("Doctor ID:", "e.g., 1")
-    inventory_id_entry = _make_field("Medicine Inventory ID:", "e.g., 3")
-    dosage_entry = _make_field("Dosage Instructions:", "e.g., 1 tablet twice daily")
-    duration_entry = _make_field("Duration:", "e.g., 7 days")
-    patient_id_entry.focus()
-
-    result_label = ctk.CTkLabel(rx_window, text="", font=("Arial", 10))
-    result_label.pack(pady=6)
-
-    def create_prescription():
-        try:
-            patient_id = int(patient_id_entry.get().strip())
-            doctor_id = int(doctor_id_entry.get().strip())
-            inventory_id = int(inventory_id_entry.get().strip())
-        except ValueError:
-            result_label.configure(text="❌ Patient ID, Doctor ID, and Medicine ID must be numeric.", text_color="#FF6B6B")
-            return
-
-        dosage = dosage_entry.get().strip()
-        duration = duration_entry.get().strip()
-        if not dosage or not duration:
-            result_label.configure(text="❌ Dosage and duration are required.", text_color="#FF6B6B")
-            return
-
-        success, message = db.insert_prescription(patient_id, doctor_id, inventory_id, dosage, duration)
-        if success:
-            result_label.configure(text=message, text_color="#4CAF50")
-            textbox.configure(state="normal")
-            textbox.delete("1.0", "end")
-            textbox.insert("end", message + "\n")
-            textbox.configure(state="disabled")
-            rx_window.after(1500, rx_window.destroy)
-        else:
-            result_label.configure(text=message, text_color="#FF6B6B")
-
-    ctk.CTkButton(
-        rx_window,
-        text="Create Prescription",
-        command=create_prescription,
-        fg_color="#4CAF50",
-        hover_color="#45a049",
-        height=38,
-    ).pack(pady=10)
-
-
-def show_patient_prescriptions():
-    """Opens a popup to display all prescriptions for a patient."""
-    rx_list_window = ctk.CTkToplevel(app)
-    rx_list_window.title("Patient Prescriptions")
-    rx_list_window.geometry("450x210")
-    rx_list_window.transient(app)
-    rx_list_window.grab_set()
-
-    ctk.CTkLabel(rx_list_window, text="Enter Patient ID:", font=("Arial", 12, "bold")).pack(pady=10)
-    patient_entry = ctk.CTkEntry(rx_list_window, placeholder_text="e.g., 1", width=380)
-    patient_entry.pack(pady=10, padx=30)
-    patient_entry.focus()
-
-    error_label = ctk.CTkLabel(rx_list_window, text="", font=("Arial", 10), text_color="#FF6B6B")
-    error_label.pack(pady=2)
-
-    def load_prescriptions():
-        try:
-            patient_id = int(patient_entry.get().strip())
-        except ValueError:
-            error_label.configure(text="❌ Patient ID must be a number.")
-            return
-        pharmacy_view = PharmacyView(textbox, db)
-        pharmacy_view.show_patient_prescriptions(patient_id)
-        rx_list_window.destroy()
-
-    ctk.CTkButton(
-        rx_list_window,
-        text="View Prescriptions",
-        command=load_prescriptions,
-        fg_color="#2196F3",
-        hover_color="#0b7dda",
-        height=38,
-    ).pack(pady=10)
-
-
-def show_low_stock_alert():
-    """Displays low stock items in pharmacy inventory."""
-    pharmacy_view = PharmacyView(textbox, db)
-    pharmacy_view.show_low_stock_items()
-
-
 def open_generate_bill_window():
     """Opens a popup to generate a discharge bill."""
     bill_window = ctk.CTkToplevel(app)
@@ -2112,12 +1889,6 @@ def show_vitals_analytics():
     """Displays overall vitals analytics report."""
     reports_view = ReportsView(textbox, db)
     reports_view.show_vitals_analytics()
-
-
-def show_pharmacy_analytics():
-    """Displays overall pharmacy analytics report."""
-    reports_view = ReportsView(textbox, db)
-    reports_view.show_pharmacy_analytics()
 
 
 def show_billing_analytics():
@@ -2315,24 +2086,6 @@ btn_vitals_summary.pack(side="left", padx=5)
 btn_vitals_search = ctk.CTkButton(vitals_frame, text="Search by Date", command=open_vitals_search_window, height=40, font=("Arial", 12), width=150, fg_color="#FF9800", hover_color="#e68900")
 btn_vitals_search.pack(side="left", padx=5)
 
-# --- PHARMACY MANAGEMENT ---
-pharmacy_frame = ctk.CTkFrame(app)
-pharmacy_frame.pack(pady=10, padx=20, fill="x")
-
-ctk.CTkLabel(pharmacy_frame, text="💊 PHARMACY", font=("Arial", 12, "bold")).pack(side="left", padx=5)
-
-btn_view_inventory = ctk.CTkButton(pharmacy_frame, text="View Pharmacy Inventory", command=show_pharmacy_inventory, height=40, font=("Arial", 12), width=190, fg_color="#00BCD4", hover_color="#0097A7")
-btn_view_inventory.pack(side="left", padx=5)
-
-btn_create_prescription = ctk.CTkButton(pharmacy_frame, text="Create New Prescription", command=open_create_prescription_window, height=40, font=("Arial", 12), width=190, fg_color="#4CAF50", hover_color="#45a049")
-btn_create_prescription.pack(side="left", padx=5)
-
-btn_patient_prescriptions = ctk.CTkButton(pharmacy_frame, text="View Patient Prescriptions", command=show_patient_prescriptions, height=40, font=("Arial", 12), width=200, fg_color="#2196F3", hover_color="#0b7dda")
-btn_patient_prescriptions.pack(side="left", padx=5)
-
-btn_low_stock = ctk.CTkButton(pharmacy_frame, text="Low Stock Items Alert", command=show_low_stock_alert, height=40, font=("Arial", 12), width=180, fg_color="#F44336", hover_color="#d32f2f")
-btn_low_stock.pack(side="left", padx=5)
-
 # --- BILLING MANAGEMENT ---
 billing_frame = ctk.CTkFrame(app)
 billing_frame.pack(pady=10, padx=20, fill="x")
@@ -2362,9 +2115,6 @@ btn_hospital_overview.pack(side="left", padx=5)
 
 btn_vitals_analytics = ctk.CTkButton(reports_frame, text="Vitals Analytics", command=show_vitals_analytics, height=40, font=("Arial", 12), width=160, fg_color="#009688", hover_color="#00796B")
 btn_vitals_analytics.pack(side="left", padx=5)
-
-btn_pharmacy_analytics = ctk.CTkButton(reports_frame, text="Pharmacy Analytics", command=show_pharmacy_analytics, height=40, font=("Arial", 12), width=170, fg_color="#795548", hover_color="#5D4037")
-btn_pharmacy_analytics.pack(side="left", padx=5)
 
 btn_billing_analytics = ctk.CTkButton(reports_frame, text="Billing Analytics", command=show_billing_analytics, height=40, font=("Arial", 12), width=160, fg_color="#E91E63", hover_color="#C2185B")
 btn_billing_analytics.pack(side="left", padx=5)

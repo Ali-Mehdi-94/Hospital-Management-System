@@ -873,205 +873,6 @@ def get_vitals_summary(admission_id):
         return None
 
 
-# ========== PHARMACY & PRESCRIPTIONS FUNCTIONS ==========
-
-def get_pharmacy_inventory():
-    """
-    Fetches all medicines from the Pharmacy_Inventory table with their stock levels and price.
-    Returns: List of tuples (inventory_id, medicine_name, stock_quantity, unit_price)
-    """
-    try:
-        conn = create_connection()
-        if conn is None:
-            return []
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT inventory_id, medicine_name, stock_quantity, unit_price
-            FROM Pharmacy_Inventory
-            ORDER BY medicine_name ASC
-            """
-        )
-        items = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        return items if items else []
-    except Error as e:
-        print(f"❌ Error fetching pharmacy inventory: {e}")
-        return []
-
-
-def get_low_stock_items():
-    """
-    Fetches medicines with stock_quantity below 5 units (low stock threshold).
-    Returns: List of tuples (inventory_id, medicine_name, stock_quantity, unit_price)
-    """
-    try:
-        conn = create_connection()
-        if conn is None:
-            return []
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT inventory_id, medicine_name, stock_quantity, unit_price
-            FROM Pharmacy_Inventory
-            WHERE stock_quantity < 5
-            ORDER BY stock_quantity ASC
-            """
-        )
-        items = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        return items if items else []
-    except Error as e:
-        print(f"❌ Error fetching low stock items: {e}")
-        return []
-
-
-def insert_prescription(patient_id, doctor_id, inventory_id, dosage, duration):
-    """
-    Inserts a new prescription record. The Pharmacy Stock Manager trigger will
-    automatically deduct the stock quantity upon insertion.
-    Args:
-        patient_id (int): ID of the patient
-        doctor_id (int): ID of the prescribing doctor
-        inventory_id (int): ID of the medicine from Pharmacy_Inventory
-        dosage (str): Dosage instructions (e.g., '1 tablet twice daily')
-        duration (str): Duration of prescription (e.g., '7 days')
-    Returns: Tuple (success: bool, message: str)
-    """
-    try:
-        conn = create_connection()
-        if conn is None:
-            return False, "❌ Database connection failed."
-        cursor = conn.cursor()
-
-        # Validate patient exists
-        cursor.execute("SELECT patient_id FROM Patients WHERE patient_id = %s", (patient_id,))
-        if not cursor.fetchone():
-            cursor.close()
-            conn.close()
-            return False, f"❌ Patient ID {patient_id} not found."
-
-        # Validate doctor exists
-        cursor.execute("SELECT doctor_id FROM Doctors WHERE doctor_id = %s", (doctor_id,))
-        if not cursor.fetchone():
-            cursor.close()
-            conn.close()
-            return False, f"❌ Doctor ID {doctor_id} not found."
-
-        # Validate medicine exists and has stock
-        cursor.execute(
-            "SELECT medicine_name, stock_quantity FROM Pharmacy_Inventory WHERE inventory_id = %s",
-            (inventory_id,)
-        )
-        medicine = cursor.fetchone()
-        if not medicine:
-            cursor.close()
-            conn.close()
-            return False, f"❌ Medicine with Inventory ID {inventory_id} not found."
-        medicine_name, stock_qty = medicine
-        if stock_qty < 1:
-            cursor.close()
-            conn.close()
-            return False, f"❌ '{medicine_name}' is out of stock."
-
-        # Insert the prescription (trigger will auto-deduct stock)
-        cursor.execute(
-            """
-            INSERT INTO Prescriptions (patient_id, doctor_id, inventory_id, dosage, duration, prescribed_date)
-            VALUES (%s, %s, %s, %s, %s, CURDATE())
-            """,
-            (patient_id, doctor_id, inventory_id, dosage, duration)
-        )
-        conn.commit()
-        new_id = cursor.lastrowid
-        cursor.close()
-        conn.close()
-        return True, f"✅ Prescription #{new_id} created for '{medicine_name}'. Stock updated automatically."
-    except Error as e:
-        print(f"❌ Error inserting prescription: {e}")
-        return False, f"❌ Error: {e}"
-
-
-def get_patient_prescriptions(patient_id):
-    """
-    Fetches all prescriptions for a given patient, joined with medicine and doctor names.
-    Args: patient_id (int): ID of the patient
-    Returns: List of tuples (prescription_id, medicine_name, doctor_name, dosage, duration, prescribed_date)
-    """
-    try:
-        conn = create_connection()
-        if conn is None:
-            return []
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT
-                p.prescription_id,
-                pi.medicine_name,
-                CONCAT(d.first_name, ' ', d.last_name) AS doctor_name,
-                p.dosage,
-                p.duration,
-                p.prescribed_date
-            FROM Prescriptions p
-            JOIN Pharmacy_Inventory pi ON p.inventory_id = pi.inventory_id
-            JOIN Doctors d ON p.doctor_id = d.doctor_id
-            WHERE p.patient_id = %s
-            ORDER BY p.prescribed_date DESC
-            """,
-            (patient_id,)
-        )
-        prescriptions = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        return prescriptions if prescriptions else []
-    except Error as e:
-        print(f"❌ Error fetching patient prescriptions: {e}")
-        return []
-
-
-def get_prescription_details(prescription_id):
-    """
-    Fetches full details for a single prescription including patient, doctor, and medicine info.
-    Args: prescription_id (int): ID of the prescription
-    Returns: Tuple (prescription_id, patient_name, doctor_name, medicine_name,
-                    stock_quantity, unit_price, dosage, duration, prescribed_date) or None
-    """
-    try:
-        conn = create_connection()
-        if conn is None:
-            return None
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT
-                p.prescription_id,
-                CONCAT(pat.first_name, ' ', pat.last_name) AS patient_name,
-                CONCAT(d.first_name, ' ', d.last_name)     AS doctor_name,
-                pi.medicine_name,
-                pi.stock_quantity,
-                pi.unit_price,
-                p.dosage,
-                p.duration,
-                p.prescribed_date
-            FROM Prescriptions p
-            JOIN Patients pat ON p.patient_id = pat.patient_id
-            JOIN Doctors d    ON p.doctor_id  = d.doctor_id
-            JOIN Pharmacy_Inventory pi ON p.inventory_id = pi.inventory_id
-            WHERE p.prescription_id = %s
-            """,
-            (prescription_id,)
-        )
-        details = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        return details
-    except Error as e:
-        print(f"❌ Error fetching prescription details: {e}")
-        return None
-
-
 def calculate_bed_charges(patient_id):
     """
     Calculates bed charges for all admissions of a patient.
@@ -1308,6 +1109,7 @@ def get_patient_statistics():
         totals_row = cursor.fetchone() or (0, 0, 0)
 
         registered_last_30_days = 0
+        stats_note = None
         thirty_days_ago = date.today() - timedelta(days=30)
         try:
             cursor.execute(
@@ -1320,25 +1122,32 @@ def get_patient_statistics():
             )
             registered_last_30_days = cursor.fetchone()[0] or 0
         except Error:
-            # Fallback for schemas that use registration_date instead of created_at
-            cursor.execute(
-                """
-                SELECT COUNT(*)
-                FROM Patients
-                WHERE registration_date >= %s
-                """,
-                (thirty_days_ago,),
-            )
-            registered_last_30_days = cursor.fetchone()[0] or 0
+            try:
+                # Fallback for schemas that use registration_date instead of created_at
+                cursor.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM Patients
+                    WHERE registration_date >= %s
+                    """,
+                    (thirty_days_ago,),
+                )
+                registered_last_30_days = cursor.fetchone()[0] or 0
+            except Error:
+                registered_last_30_days = 0
+                stats_note = "Registration date column is unavailable; 'Last 30 Days' is shown as 0."
 
         cursor.close()
         conn.close()
-        return {
+        stats = {
             "total_patients": totals_row[0] or 0,
             "male_patients": totals_row[1] or 0,
             "female_patients": totals_row[2] or 0,
             "registered_last_30_days": registered_last_30_days or 0,
         }
+        if stats_note:
+            stats["message"] = stats_note
+        return stats
     except Error as e:
         print(f"❌ Error fetching patient statistics: {e}")
         return {
@@ -1456,44 +1265,6 @@ def get_vitals_statistics():
         }
 
 
-def get_pharmacy_statistics():
-    """Returns aggregate statistics for pharmacy inventory."""
-    try:
-        conn = create_connection()
-        if conn is None:
-            return {
-                "total_medicines": 0,
-                "low_stock_count": 0,
-                "total_inventory_value": 0.0,
-            }
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT
-                COUNT(*) AS total_medicines,
-                SUM(CASE WHEN stock_quantity < %s THEN 1 ELSE 0 END) AS low_stock_count,
-                SUM(stock_quantity * unit_price) AS total_inventory_value
-            FROM Pharmacy_Inventory
-            """,
-            (5,),
-        )
-        row = cursor.fetchone() or (0, 0, 0)
-        cursor.close()
-        conn.close()
-        return {
-            "total_medicines": row[0] or 0,
-            "low_stock_count": row[1] or 0,
-            "total_inventory_value": float(row[2] or 0.0),
-        }
-    except Error as e:
-        print(f"❌ Error fetching pharmacy statistics: {e}")
-        return {
-            "total_medicines": 0,
-            "low_stock_count": 0,
-            "total_inventory_value": 0.0,
-        }
-
-
 def get_billing_statistics():
     """Returns aggregate statistics for billing and revenue."""
     try:
@@ -1527,6 +1298,16 @@ def get_billing_statistics():
             "paid_bills": row[3] or 0,
         }
     except Error as e:
+        error_text = str(e).lower()
+        if "doesn't exist" in error_text and "bills" in error_text:
+            print("ℹ️ Bills table is unavailable. Returning zeroed billing statistics.")
+            return {
+                "total_bills": 0,
+                "total_revenue": 0.0,
+                "pending_bills": 0,
+                "paid_bills": 0,
+                "message": "Billing table is missing; billing analytics are currently unavailable.",
+            }
         print(f"❌ Error fetching billing statistics: {e}")
         return {
             "total_bills": 0,
