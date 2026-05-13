@@ -1,6 +1,5 @@
 import mysql.connector
 from mysql.connector import Error
-from datetime import date, timedelta
 
 def create_connection():
     """Establishes and returns a secure connection to the hospital database."""
@@ -24,7 +23,7 @@ def get_all_doctors():
             cursor = conn.cursor()
             # Advanced Query: Joining Doctors and Departments tables
             query = """
-                SELECT d.first_name, d.last_name, d.specialization, dept.department_name
+                SELECT d.doctor_id, d.first_name, d.last_name, d.specialization, dept.department_name
                 FROM Doctors d
                 JOIN Departments dept ON d.department_id = dept.department_id;
             """
@@ -94,17 +93,19 @@ def insert_new_doctor(first_name, last_name, specialization, department_id):
 
 
 def get_doctor_dependency_counts(doctor_id):
-    """Returns dependency counts for a doctor (prescriptions)."""
+    """Returns dependency counts for a doctor (appointments, prescriptions)."""
     try:
         conn = create_connection()
         if conn is None:
             return None
         cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM Appointments WHERE doctor_id = %s", (doctor_id,))
+        appointments_count = cursor.fetchone()[0]
         cursor.execute("SELECT COUNT(*) FROM Prescriptions WHERE doctor_id = %s", (doctor_id,))
         prescriptions_count = cursor.fetchone()[0]
         cursor.close()
         conn.close()
-        return {"prescriptions": prescriptions_count}
+        return {"appointments": appointments_count, "prescriptions": prescriptions_count}
     except Error as e:
         print(f"❌ Error checking doctor dependencies: {e}")
         return None
@@ -112,7 +113,7 @@ def get_doctor_dependency_counts(doctor_id):
 
 def delete_doctor(doctor_id, confirm_cascade=False, dependency_counts=None):
     """
-    Deletes a doctor. If dependent prescriptions exist, confirm_cascade must be True.
+    Deletes a doctor. If dependent appointments/prescriptions exist, confirm_cascade must be True.
     Returns: (success: bool, message: str, dependency_counts: dict|None)
     """
     try:
@@ -128,21 +129,27 @@ def delete_doctor(doctor_id, confirm_cascade=False, dependency_counts=None):
             return False, f"❌ Doctor ID {doctor_id} not found.", None
 
         if dependency_counts is None:
+            cursor.execute("SELECT COUNT(*) FROM Appointments WHERE doctor_id = %s", (doctor_id,))
+            appointments_count = cursor.fetchone()[0]
             cursor.execute("SELECT COUNT(*) FROM Prescriptions WHERE doctor_id = %s", (doctor_id,))
-            dependency_counts = {"prescriptions": cursor.fetchone()[0]}
+            dependency_counts = {
+                "appointments": appointments_count,
+                "prescriptions": cursor.fetchone()[0],
+            }
 
-        if dependency_counts["prescriptions"] > 0 and not confirm_cascade:
+        if (dependency_counts["appointments"] > 0 or dependency_counts["prescriptions"] > 0) and not confirm_cascade:
             cursor.close()
             conn.close()
             return (
                 False,
-                "⚠️ Doctor has related prescriptions. Confirmation required for cascade delete.",
+                "⚠️ Doctor has related appointments/prescriptions. Confirmation required for cascade delete.",
                 dependency_counts,
             )
 
         if not conn.in_transaction:
             conn.start_transaction()
 
+        cursor.execute("DELETE FROM Appointments WHERE doctor_id = %s", (doctor_id,))
         cursor.execute("DELETE FROM Prescriptions WHERE doctor_id = %s", (doctor_id,))
         cursor.execute("DELETE FROM Doctors WHERE doctor_id = %s", (doctor_id,))
         conn.commit()
@@ -252,10 +259,16 @@ def search_patients(search_term):
         FROM Patients
         WHERE CONCAT(first_name, ' ', last_name) LIKE %s 
            OR phone LIKE %s
+           OR (%s <> '' AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '-', ''), ' ', ''), '+', ''), '(', ''), ')', '') LIKE %s)
         ORDER BY first_name ASC
         """
         search_pattern = f"%{search_term}%"
-        cursor.execute(query, (search_pattern, search_pattern))
+        normalized_search_term = "".join(ch for ch in str(search_term) if ch.isdigit())
+        normalized_search_pattern = f"%{normalized_search_term}%"
+        cursor.execute(
+            query,
+            (search_pattern, search_pattern, normalized_search_term, normalized_search_pattern),
+        )
         patients = cursor.fetchall()
         cursor.close()
         conn.close()
@@ -366,6 +379,126 @@ def get_all_wards():
     except Error as e:
         print(f"❌ Error fetching wards: {e}")
         return []
+
+
+def add_ward(ward_name, ward_type):
+    """Adds a new ward."""
+    try:
+        conn = create_connection()
+        if conn is None:
+            return False, "❌ Database connection failed."
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO Wards (ward_name, ward_type)
+            VALUES (%s, %s)
+            """,
+            (ward_name, ward_type),
+        )
+        conn.commit()
+        ward_id = cursor.lastrowid
+        cursor.close()
+        conn.close()
+        return True, f"✅ Ward added successfully (Ward ID: {ward_id})."
+    except Error as e:
+        print(f"❌ Error adding ward: {e}")
+        return False, f"❌ Error: {e}"
+
+
+def delete_ward(ward_id):
+    """Deletes a ward if it has no linked beds."""
+    try:
+        conn = create_connection()
+        if conn is None:
+            return False, "❌ Database connection failed."
+        cursor = conn.cursor()
+        cursor.execute("SELECT ward_id FROM Wards WHERE ward_id = %s", (ward_id,))
+        if cursor.fetchone() is None:
+            cursor.close()
+            conn.close()
+            return False, f"❌ Ward ID {ward_id} not found."
+
+        cursor.execute("SELECT COUNT(*) FROM Beds WHERE ward_id = %s", (ward_id,))
+        beds_count = cursor.fetchone()[0] or 0
+        if beds_count > 0:
+            cursor.close()
+            conn.close()
+            return False, f"⚠️ Ward {ward_id} has {beds_count} bed(s). Delete beds first."
+
+        cursor.execute("DELETE FROM Wards WHERE ward_id = %s", (ward_id,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True, f"✅ Ward ID {ward_id} deleted successfully."
+    except Error as e:
+        print(f"❌ Error deleting ward: {e}")
+        return False, f"❌ Error: {e}"
+
+
+def add_bed(ward_id):
+    """Adds an available bed to the given ward."""
+    try:
+        conn = create_connection()
+        if conn is None:
+            return False, "❌ Database connection failed."
+        cursor = conn.cursor()
+        cursor.execute("SELECT ward_id FROM Wards WHERE ward_id = %s", (ward_id,))
+        if cursor.fetchone() is None:
+            cursor.close()
+            conn.close()
+            return False, f"❌ Ward ID {ward_id} not found."
+
+        cursor.execute(
+            """
+            INSERT INTO Beds (ward_id, status)
+            VALUES (%s, 'Available')
+            """,
+            (ward_id,),
+        )
+        conn.commit()
+        bed_id = cursor.lastrowid
+        cursor.close()
+        conn.close()
+        return True, f"✅ Bed added successfully (Bed ID: {bed_id}) in Ward {ward_id}."
+    except Error as e:
+        print(f"❌ Error adding bed: {e}")
+        return False, f"❌ Error: {e}"
+
+
+def delete_bed(bed_id):
+    """Deletes a bed if it is not occupied and has no admission history."""
+    try:
+        conn = create_connection()
+        if conn is None:
+            return False, "❌ Database connection failed."
+        cursor = conn.cursor()
+        cursor.execute("SELECT status FROM Beds WHERE bed_id = %s", (bed_id,))
+        bed_row = cursor.fetchone()
+        if bed_row is None:
+            cursor.close()
+            conn.close()
+            return False, f"❌ Bed ID {bed_id} not found."
+
+        if str(bed_row[0]).lower() == "occupied":
+            cursor.close()
+            conn.close()
+            return False, f"⚠️ Bed {bed_id} is currently occupied. Discharge patient first."
+
+        cursor.execute("SELECT COUNT(*) FROM Admissions WHERE bed_id = %s", (bed_id,))
+        admissions_count = cursor.fetchone()[0] or 0
+        if admissions_count > 0:
+            cursor.close()
+            conn.close()
+            return False, f"⚠️ Bed {bed_id} has admission records. Delete not allowed."
+
+        cursor.execute("DELETE FROM Beds WHERE bed_id = %s", (bed_id,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True, f"✅ Bed ID {bed_id} deleted successfully."
+    except Error as e:
+        print(f"❌ Error deleting bed: {e}")
+        return False, f"❌ Error: {e}"
 
 
 def get_available_beds(ward_id):
@@ -794,40 +927,6 @@ def get_latest_vitals(admission_id):
         return None
 
 
-def search_vitals_by_date(admission_id, start_date, end_date):
-    """
-    Fetches vital records for an admission within the given date range (inclusive).
-    Args:
-        admission_id (int): ID of the admission
-        start_date (str): Start date in YYYY-MM-DD format
-        end_date (str): End date in YYYY-MM-DD format
-    Returns: List of tuples (vital_id, admission_id, bp_sys, bp_dia, heart_beat, sugar_level, recorded_time)
-    """
-    try:
-        conn = create_connection()
-        if conn is None:
-            return []
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT vital_id, admission_id, blood_pressure_sys, blood_pressure_dia,
-                   heart_beat, sugar_level, recorded_time
-            FROM Diagnoses_and_Vitals
-            WHERE admission_id = %s
-              AND DATE(recorded_time) BETWEEN %s AND %s
-            ORDER BY recorded_time ASC
-            """,
-            (admission_id, start_date, end_date)
-        )
-        vitals = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        return vitals if vitals else []
-    except Error as e:
-        print(f"❌ Error searching vitals by date: {e}")
-        return []
-
-
 def get_vitals_summary(admission_id):
     """
     Calculates aggregate statistics (average, minimum, maximum) for all vital
@@ -918,7 +1017,7 @@ def calculate_medicine_charges(patient_id):
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT COALESCE(SUM(pi.unit_price), 0)
+            SELECT COALESCE(SUM(pi.price_per_unit), 0)
             FROM Prescriptions p
             JOIN Pharmacy_Inventory pi ON p.inventory_id = pi.inventory_id
             WHERE p.patient_id = %s
@@ -981,6 +1080,22 @@ def generate_bill(patient_id, payment_status="Pending"):
             conn.close()
             return False, f"❌ Patient ID {patient_id} not found."
 
+        cursor.execute(
+            """
+            SELECT admission_id
+            FROM Admissions
+            WHERE patient_id = %s
+            ORDER BY admission_date DESC, admission_id DESC
+            LIMIT 1
+            """,
+            (patient_id,),
+        )
+        admission_row = cursor.fetchone()
+        if not admission_row:
+            cursor.close()
+            conn.close()
+            return False, f"❌ No admission found for Patient ID {patient_id}. Cannot generate discharge bill."
+
         bed_charges = calculate_bed_charges(patient_id)
         medicine_charges = calculate_medicine_charges(patient_id)
         test_charges = calculate_test_charges(patient_id)
@@ -988,10 +1103,10 @@ def generate_bill(patient_id, payment_status="Pending"):
 
         cursor.execute(
             """
-            INSERT INTO Bills (patient_id, amount, payment_status, issue_date, due_date)
-            VALUES (%s, %s, %s, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 7 DAY))
+            INSERT INTO Billing (patient_id, admission_id, total_amount, payment_status)
+            VALUES (%s, %s, %s, %s)
             """,
-            (patient_id, total_amount, payment_status),
+            (patient_id, admission_row[0], total_amount, payment_status),
         )
         conn.commit()
         bill_id = cursor.lastrowid
@@ -1018,15 +1133,14 @@ def get_patient_bill(patient_id):
             SELECT
                 b.bill_id,
                 b.patient_id,
+                b.admission_id,
                 CONCAT(p.first_name, ' ', p.last_name) AS patient_name,
-                b.amount,
-                b.payment_status,
-                b.issue_date,
-                b.due_date
-            FROM Bills b
+                b.total_amount,
+                b.payment_status
+            FROM Billing b
             JOIN Patients p ON b.patient_id = p.patient_id
             WHERE b.patient_id = %s
-            ORDER BY b.issue_date DESC, b.bill_id DESC
+            ORDER BY b.bill_id DESC
             LIMIT 1
             """,
             (patient_id,),
@@ -1065,14 +1179,13 @@ def get_all_bills():
             SELECT
                 b.bill_id,
                 b.patient_id,
+                b.admission_id,
                 CONCAT(p.first_name, ' ', p.last_name) AS patient_name,
-                b.amount,
-                b.payment_status,
-                b.issue_date,
-                b.due_date
-            FROM Bills b
+                b.total_amount,
+                b.payment_status
+            FROM Billing b
             JOIN Patients p ON b.patient_id = p.patient_id
-            ORDER BY b.issue_date DESC, b.bill_id DESC
+            ORDER BY b.bill_id DESC
             """
         )
         bills = cursor.fetchall()
@@ -1108,45 +1221,15 @@ def get_patient_statistics():
         )
         totals_row = cursor.fetchone() or (0, 0, 0)
 
-        registered_last_30_days = 0
-        stats_note = None
-        thirty_days_ago = date.today() - timedelta(days=30)
-        try:
-            cursor.execute(
-                """
-                SELECT COUNT(*)
-                FROM Patients
-                WHERE created_at >= %s
-                """,
-                (thirty_days_ago,),
-            )
-            registered_last_30_days = cursor.fetchone()[0] or 0
-        except Error:
-            try:
-                # Fallback for schemas that use registration_date instead of created_at
-                cursor.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM Patients
-                    WHERE registration_date >= %s
-                    """,
-                    (thirty_days_ago,),
-                )
-                registered_last_30_days = cursor.fetchone()[0] or 0
-            except Error:
-                registered_last_30_days = 0
-                stats_note = "Registration date column is unavailable; 'Last 30 Days' is shown as 0."
-
         cursor.close()
         conn.close()
         stats = {
             "total_patients": totals_row[0] or 0,
             "male_patients": totals_row[1] or 0,
             "female_patients": totals_row[2] or 0,
-            "registered_last_30_days": registered_last_30_days or 0,
+            "registered_last_30_days": None,
         }
-        if stats_note:
-            stats["message"] = stats_note
+        stats["message"] = "Registration-date tracking is not available in current schema."
         return stats
     except Error as e:
         print(f"❌ Error fetching patient statistics: {e}")
@@ -1281,10 +1364,10 @@ def get_billing_statistics():
             """
             SELECT
                 COUNT(*) AS total_bills,
-                SUM(amount) AS total_revenue,
+                SUM(total_amount) AS total_revenue,
                 SUM(CASE WHEN LOWER(payment_status) = %s THEN 1 ELSE 0 END) AS pending_bills,
                 SUM(CASE WHEN LOWER(payment_status) = %s THEN 1 ELSE 0 END) AS paid_bills
-            FROM Bills
+            FROM Billing
             """,
             ("pending", "paid"),
         )
@@ -1299,8 +1382,8 @@ def get_billing_statistics():
         }
     except Error as e:
         error_text = str(e).lower()
-        if "doesn't exist" in error_text and "bills" in error_text:
-            print("ℹ️ Bills table is unavailable. Returning zeroed billing statistics.")
+        if "doesn't exist" in error_text and "billing" in error_text:
+            print("ℹ️ Billing table is unavailable. Returning zeroed billing statistics.")
             return {
                 "total_bills": 0,
                 "total_revenue": 0.0,
@@ -1318,7 +1401,7 @@ def get_billing_statistics():
 
 
 def get_patient_dependency_counts(patient_id):
-    """Returns dependency counts for a patient (admissions, vitals, prescriptions)."""
+    """Returns dependency counts for a patient (admissions, vitals, prescriptions, appointments)."""
     try:
         conn = create_connection()
         if conn is None:
@@ -1338,12 +1421,18 @@ def get_patient_dependency_counts(patient_id):
         vitals_count = cursor.fetchone()[0]
         cursor.execute("SELECT COUNT(*) FROM Prescriptions WHERE patient_id = %s", (patient_id,))
         prescriptions_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM Appointments WHERE patient_id = %s", (patient_id,))
+        appointments_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM Billing WHERE patient_id = %s", (patient_id,))
+        bills_count = cursor.fetchone()[0]
         cursor.close()
         conn.close()
         return {
             "admissions": admissions_count,
             "vitals": vitals_count,
             "prescriptions": prescriptions_count,
+            "appointments": appointments_count,
+            "bills": bills_count,
         }
     except Error as e:
         print(f"❌ Error checking patient dependencies: {e}")
@@ -1353,7 +1442,7 @@ def get_patient_dependency_counts(patient_id):
 def delete_patient(patient_id, confirm_cascade=False, dependency_counts=None):
     """
     Deletes a patient. If dependent records exist, confirm_cascade must be True to proceed.
-    Cascades deletion of vitals, prescriptions, and admissions before deleting the patient.
+    Cascades deletion of vitals, appointments, prescriptions, billing, and admissions before deleting the patient.
     Returns: (success: bool, message: str, dependency_counts: dict|None)
     """
     try:
@@ -1383,11 +1472,17 @@ def delete_patient(patient_id, confirm_cascade=False, dependency_counts=None):
             vitals_count = cursor.fetchone()[0]
             cursor.execute("SELECT COUNT(*) FROM Prescriptions WHERE patient_id = %s", (patient_id,))
             prescriptions_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM Appointments WHERE patient_id = %s", (patient_id,))
+            appointments_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM Billing WHERE patient_id = %s", (patient_id,))
+            bills_count = cursor.fetchone()[0]
 
             dependency_counts = {
                 "admissions": admissions_count,
                 "vitals": vitals_count,
                 "prescriptions": prescriptions_count,
+                "appointments": appointments_count,
+                "bills": bills_count,
             }
 
         if any(dependency_counts.values()) and not confirm_cascade:
@@ -1411,7 +1506,9 @@ def delete_patient(patient_id, confirm_cascade=False, dependency_counts=None):
             """,
             (patient_id,),
         )
+        cursor.execute("DELETE FROM Appointments WHERE patient_id = %s", (patient_id,))
         cursor.execute("DELETE FROM Prescriptions WHERE patient_id = %s", (patient_id,))
+        cursor.execute("DELETE FROM Billing WHERE patient_id = %s", (patient_id,))
         cursor.execute("DELETE FROM Admissions WHERE patient_id = %s", (patient_id,))
         cursor.execute("DELETE FROM Patients WHERE patient_id = %s", (patient_id,))
 
@@ -1549,7 +1646,7 @@ def get_complete_patient_profile_data(patient_id):
                 """
                 SELECT
                     p.prescription_id,
-                    pi.medicine_name,
+                    pi.item_name,
                     CONCAT(d.first_name, ' ', d.last_name) AS doctor_name,
                     p.dosage,
                     p.duration,
@@ -1570,10 +1667,10 @@ def get_complete_patient_profile_data(patient_id):
         try:
             cursor.execute(
                 """
-                SELECT bill_id, amount, payment_status, issue_date, due_date
-                FROM Bills
+                SELECT bill_id, admission_id, total_amount, payment_status
+                FROM Billing
                 WHERE patient_id = %s
-                ORDER BY issue_date DESC
+                ORDER BY bill_id DESC
                 """,
                 (patient_id,),
             )
