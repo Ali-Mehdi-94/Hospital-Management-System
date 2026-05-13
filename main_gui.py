@@ -149,7 +149,6 @@ class PatientListView:
             self.text_box.insert("end", "║ ℹ️ No admission records found.\n")
         
         self.text_box.insert("end", "╚" + "═" * 100 + "╝\n")
-        self.text_box.insert("end", "\n✅ Use 'Back to Patient List' button to return to the full list.\n")
         
         self.text_box.configure(state="disabled")
     
@@ -505,48 +504,6 @@ class DiagnosticVitalsView:
         self._write("╚" + "═" * 80 + "╝\n")
         self.text_box.configure(state="disabled")
 
-    def show_search_results(self, admission_id, start_date, end_date):
-        """Display vitals filtered by date range."""
-        self.text_box.configure(state="normal")
-        self.text_box.delete("1.0", "end")
-
-        vitals = self.db.search_vitals_by_date(admission_id, start_date, end_date)
-
-        start_fmt = start_date if start_date else "N/A"
-        end_fmt   = end_date   if end_date   else "N/A"
-
-        self._write("╔" + "═" * 118 + "╗\n")
-        self._write("║ " + f"VITALS SEARCH  —  Admission: {admission_id}  |  {start_fmt} → {end_fmt}".center(116) + " ║\n")
-        self._write("╠" + "═" * 118 + "╣\n")
-
-        if not vitals:
-            self._write("║ " + "No records found in the selected date range.".center(116) + " ║\n")
-            self._write("╚" + "═" * 118 + "╝\n")
-            self.text_box.configure(state="disabled")
-            return
-
-        self._write(
-            "║ VitalID │ BP Sys (mmHg) │ BP Dia (mmHg) │ Heart Rate (bpm) │ Sugar (mg/dL) │ Recorded At              ║\n"
-        )
-        self._write("╠" + "═" * 118 + "╣\n")
-
-        for row in vitals:
-            vital_id, adm_id, bp_sys, bp_dia, hr, sugar, rec_time = row
-            ts = self._fmt_datetime(rec_time)
-            bp_sys_s = f"{bp_sys} {self._status_icon('bp_systolic',  bp_sys)}"
-            bp_dia_s = f"{bp_dia} {self._status_icon('bp_diastolic', bp_dia)}"
-            hr_s     = f"{hr} {self._status_icon('heart_rate',   hr)}"
-            sugar_s  = f"{sugar} {self._status_icon('sugar_level',  sugar)}"
-            self._write(
-                f"║ {str(vital_id):7} │ {str(bp_sys_s):<13} │ {str(bp_dia_s):<13} │ {str(hr_s):<16} │ {str(sugar_s):<13} │ {ts:<24} ║\n"
-            )
-
-        self._write("╚" + "═" * 118 + "╝\n")
-        self._write(f"\n🔍 Found {len(vitals)} record(s).\n")
-        self._write("💡 Legend: 🟢 Normal  🟡 Warning  🔴 Critical\n")
-        self.text_box.configure(state="disabled")
-
-
 class BillingView:
     """Manages billing output in the dashboard textbox."""
 
@@ -579,11 +536,11 @@ class BillingView:
             self.text_box.configure(state="disabled")
             return
 
-        bill_id, _, patient_name, amount, payment_status, issue_date, due_date = bill_data["bill"]
+        bill_id, _, admission_id, patient_name, amount, payment_status = bill_data["bill"]
         status_icon = "🟢 Paid" if str(payment_status).lower() == "paid" else "🟡 Pending"
 
         self._write(f"║ Bill ID: {bill_id:<10} Patient: {patient_name:<55} Status: {status_icon:<12} ║\n")
-        self._write(f"║ Issue Date: {self._fmt_date(issue_date):<12} Due Date: {self._fmt_date(due_date):<12} {'':<48} ║\n")
+        self._write(f"║ Admission ID: {admission_id:<10} {'':<84} ║\n")
         self._write("╠" + "═" * 100 + "╣\n")
         self._write("║ Itemized Charges                                                                       ║\n")
         self._write("╟" + "─" * 100 + "╢\n")
@@ -611,15 +568,15 @@ class BillingView:
             return
 
         self._write(
-            "║ Bill.ID │ Pat.ID │ Patient Name                  │ Amount (PKR) │ Payment Status │ Issue Date  │ Due Date    ║\n"
+            "║ Bill.ID │ Pat.ID │ Adm.ID │ Patient Name               │ Amount (PKR) │ Payment Status ║\n"
         )
         self._write("╠" + "═" * 118 + "╣\n")
 
         for bill in bills:
-            bill_id, pat_id, patient_name, amount, payment_status, issue_date, due_date = bill
+            bill_id, pat_id, admission_id, patient_name, amount, payment_status = bill
             status_icon = "🟢 Paid" if str(payment_status).lower() == "paid" else "🟡 Pending"
             self._write(
-                f"║ {str(bill_id):7} │ {str(pat_id):6} │ {str(patient_name)[:29]:<29} │ {float(amount):12.2f} │ {status_icon:<14} │ {self._fmt_date(issue_date):<10} │ {self._fmt_date(due_date):<11} ║\n"
+                f"║ {str(bill_id):7} │ {str(pat_id):6} │ {str(admission_id):6} │ {str(patient_name)[:26]:<26} │ {float(amount):12.2f} │ {status_icon:<14} ║\n"
             )
 
         self._write("╚" + "═" * 118 + "╝\n")
@@ -642,8 +599,8 @@ class BillingView:
             return
 
         total_bills = len(bills)
-        total_amount = sum(float(b[3] or 0) for b in bills)
-        paid_bills = sum(1 for b in bills if str(b[4]).lower() == "paid")
+        total_amount = sum(float(b[4] or 0) for b in bills)
+        paid_bills = sum(1 for b in bills if str(b[5]).lower() == "paid")
         pending_bills = total_bills - paid_bills
         avg_amount = total_amount / total_bills if total_bills else 0
 
@@ -695,7 +652,6 @@ class ReportsView:
         self._write("╟" + "─" * 100 + "╢\n")
         self._write(f"║ Male Patients             : {patient_stats['male_patients']:<63} ║\n")
         self._write(f"║ Female Patients           : {patient_stats['female_patients']:<63} ║\n")
-        self._write(f"║ Registered (Last 30 Days) : {patient_stats['registered_last_30_days']:<63} ║\n")
         self._write(f"║ Most Used Ward            : {admission_stats['most_used_ward']} ({admission_stats['most_used_ward_count']} admissions){'':<35} ║\n")
         if patient_stats.get("message"):
             self._write(f"║ Note: {patient_stats['message'][:91]:<91} ║\n")
@@ -879,15 +835,15 @@ class CompletePatientView:
         self.text_box.insert("end", "💵 BILLS\n")
         self.text_box.insert("end", "─" * 120 + "\n")
         if data["bills"]:
-            self.text_box.insert("end", "┌──────────┬──────────────┬──────────────┬──────────────┬──────────────┐\n")
-            self.text_box.insert("end", "│ Bill ID   │ Amount       │ Status       │ Issue Date   │ Due Date     │\n")
-            self.text_box.insert("end", "├──────────┼──────────────┼──────────────┼──────────────┼──────────────┤\n")
+            self.text_box.insert("end", "┌──────────┬──────────────┬──────────────┬──────────────┐\n")
+            self.text_box.insert("end", "│ Bill ID   │ Admission ID │ Amount       │ Status       │\n")
+            self.text_box.insert("end", "├──────────┼──────────────┼──────────────┼──────────────┤\n")
             for row in data["bills"]:
                 self.text_box.insert(
                     "end",
-                    f"│ {str(row[0]):<8} │ {str(row[1]):<12} │ {str(row[2] or 'N/A')[:12]:<12} │ {self._fmt_date(row[3]):<12} │ {self._fmt_date(row[4]):<12} │\n",
+                    f"│ {str(row[0]):<8} │ {str(row[1]):<12} │ {str(row[2]):<12} │ {str(row[3] or 'N/A')[:12]:<12} │\n",
                 )
-            self.text_box.insert("end", "└──────────┴──────────────┴──────────────┴──────────────┴──────────────┘\n")
+            self.text_box.insert("end", "└──────────┴──────────────┴──────────────┴──────────────┘\n")
         else:
             self.text_box.insert("end", "ℹ️ No bills found.\n")
 
@@ -903,7 +859,10 @@ def show_doctors():
     
     if doctor_list:
         for doc in doctor_list:
-            formatted_text = f"Dr. {doc[ 0 ]} {doc[ 1 ]} | Specialist: {doc[ 2 ]} | Department: {doc[ 3 ]}\n"
+            formatted_text = (
+                f"ID: {doc[0]} | Dr. {doc[1]} {doc[2]} | "
+                f"Specialist: {doc[3]} | Department: {doc[4]}\n"
+            )
             textbox.insert("end", formatted_text)
     else:
         textbox.insert("end", "No doctors found or database connection failed.")
@@ -976,13 +935,14 @@ def open_add_doctor_window():
 
     ctk.CTkButton(
         add_window,
-        text="Add Doctor",
+        text="Submit Doctor",
         command=execute_add,
         fg_color="#4CAF50",
         hover_color="#45a049",
         height=38,
     ).pack(pady=10)
     first_name_entry.focus()
+    first_name_entry.bind("<Return>", lambda e: execute_add())
 
 
 def open_delete_doctor_window():
@@ -999,7 +959,7 @@ def open_delete_doctor_window():
     ctk.CTkLabel(delete_window, text="Delete Doctor Record", font=("Arial", 14, "bold"), text_color="#F44336").pack(pady=10)
     ctk.CTkLabel(
         delete_window,
-        text="⚠️ This will delete doctor records including linked prescriptions",
+        text="⚠️ This will delete doctor records including linked appointments and prescriptions",
         wraplength=440,
         justify="center",
         text_color="#F44336"
@@ -1027,8 +987,9 @@ def open_delete_doctor_window():
         )
         if not success and dependency_counts:
             confirm_message = (
-                "This will delete doctor records including linked prescriptions.\n\n"
+                "This will delete doctor records including linked appointments and prescriptions.\n\n"
                 f"Doctor ID: {doctor_id}\n"
+                f"Appointments: {dependency_counts['appointments']}\n"
                 f"Prescriptions: {dependency_counts['prescriptions']}\n\n"
                 "Do you want to continue?"
             )
@@ -1130,7 +1091,7 @@ def open_delete_patient_window():
     ctk.CTkLabel(delete_window, text="Delete Patient Record", font=("Arial", 14, "bold"), text_color="#F44336").pack(pady=10)
     ctk.CTkLabel(
         delete_window,
-        text="⚠️ This will delete all patient records including admissions, vitals, and prescriptions",
+        text="⚠️ This will delete all patient records including admissions, vitals, prescriptions, appointments, and bills",
         wraplength=440,
         justify="center",
         text_color="#F44336"
@@ -1158,11 +1119,13 @@ def open_delete_patient_window():
         )
         if not success and dependency_counts:
             confirm_message = (
-                "This will delete all patient records including admissions, vitals, and prescriptions.\n\n"
+                "This will delete all patient records including admissions, vitals, prescriptions, appointments, and bills.\n\n"
                 f"Patient ID: {patient_id}\n"
                 f"Admissions: {dependency_counts['admissions']}\n"
                 f"Vitals: {dependency_counts['vitals']}\n"
                 f"Prescriptions: {dependency_counts['prescriptions']}\n\n"
+                f"Appointments: {dependency_counts['appointments']}\n"
+                f"Bills: {dependency_counts['bills']}\n\n"
                 "Do you want to continue?"
             )
             confirmed = messagebox.askyesno("Confirm Cascade Delete", confirm_message)
@@ -1391,6 +1354,178 @@ def open_view_ward_beds_window():
         command=load_beds,
         fg_color="#2196F3",
         hover_color="#0b7dda",
+        height=38
+    ).pack(pady=10)
+
+
+def open_add_ward_window():
+    """Opens a popup to add a new ward."""
+    if not require_admin_access("Add Ward"):
+        return
+
+    ward_window = ctk.CTkToplevel(app)
+    ward_window.title("Add Ward")
+    ward_window.geometry("460x280")
+    ward_window.transient(app)
+    ward_window.grab_set()
+
+    ctk.CTkLabel(ward_window, text="Add New Ward", font=("Arial", 14, "bold")).pack(pady=10)
+    ctk.CTkLabel(ward_window, text="Ward Name:", anchor="w").pack(fill="x", padx=30)
+    ward_name_entry = ctk.CTkEntry(ward_window, placeholder_text="e.g., Surgical Ward", width=390)
+    ward_name_entry.pack(pady=6, padx=30)
+    ward_name_entry.focus()
+
+    ctk.CTkLabel(ward_window, text="Ward Type:", anchor="w").pack(fill="x", padx=30)
+    ward_type_entry = ctk.CTkEntry(ward_window, placeholder_text="e.g., General", width=390)
+    ward_type_entry.pack(pady=6, padx=30)
+
+    result_label = ctk.CTkLabel(ward_window, text="", font=("Arial", 10))
+    result_label.pack(pady=6)
+
+    def execute_add():
+        ward_name = ward_name_entry.get().strip()
+        ward_type = ward_type_entry.get().strip()
+        if not ward_name or not ward_type:
+            result_label.configure(text="❌ Ward name and ward type are required.", text_color="#FF6B6B")
+            return
+        success, message = db.add_ward(ward_name, ward_type)
+        result_label.configure(text=message, text_color="#4CAF50" if success else "#FF6B6B")
+        if success:
+            show_ward_summary()
+            ward_window.after(1200, ward_window.destroy)
+
+    ctk.CTkButton(
+        ward_window,
+        text="Add Ward",
+        command=execute_add,
+        fg_color="#4CAF50",
+        hover_color="#45a049",
+        height=38
+    ).pack(pady=10)
+
+
+def open_delete_ward_window():
+    """Opens a popup to delete a ward."""
+    if not require_admin_access("Delete Ward"):
+        return
+
+    ward_window = ctk.CTkToplevel(app)
+    ward_window.title("Delete Ward")
+    ward_window.geometry("460x240")
+    ward_window.transient(app)
+    ward_window.grab_set()
+
+    ctk.CTkLabel(ward_window, text="Delete Ward", font=("Arial", 14, "bold"), text_color="#F44336").pack(pady=10)
+    ctk.CTkLabel(ward_window, text="Ward ID:", anchor="w").pack(fill="x", padx=30)
+    ward_id_entry = ctk.CTkEntry(ward_window, placeholder_text="e.g., 1", width=390)
+    ward_id_entry.pack(pady=6, padx=30)
+    ward_id_entry.focus()
+
+    result_label = ctk.CTkLabel(ward_window, text="", font=("Arial", 10))
+    result_label.pack(pady=6)
+
+    def execute_delete():
+        try:
+            ward_id = int(ward_id_entry.get().strip())
+        except ValueError:
+            result_label.configure(text="❌ Ward ID must be a number.", text_color="#FF6B6B")
+            return
+        success, message = db.delete_ward(ward_id)
+        result_label.configure(text=message, text_color="#4CAF50" if success else "#FF6B6B")
+        if success:
+            show_ward_summary()
+            ward_window.after(1200, ward_window.destroy)
+
+    ctk.CTkButton(
+        ward_window,
+        text="Delete Ward",
+        command=execute_delete,
+        fg_color="#F44336",
+        hover_color="#d32f2f",
+        height=38
+    ).pack(pady=10)
+
+
+def open_add_bed_window():
+    """Opens a popup to add a bed to a ward."""
+    if not require_admin_access("Add Bed"):
+        return
+
+    bed_window = ctk.CTkToplevel(app)
+    bed_window.title("Add Bed")
+    bed_window.geometry("460x240")
+    bed_window.transient(app)
+    bed_window.grab_set()
+
+    ctk.CTkLabel(bed_window, text="Add Bed to Ward", font=("Arial", 14, "bold")).pack(pady=10)
+    ctk.CTkLabel(bed_window, text="Ward ID:", anchor="w").pack(fill="x", padx=30)
+    ward_id_entry = ctk.CTkEntry(bed_window, placeholder_text="e.g., 1", width=390)
+    ward_id_entry.pack(pady=6, padx=30)
+    ward_id_entry.focus()
+
+    result_label = ctk.CTkLabel(bed_window, text="", font=("Arial", 10))
+    result_label.pack(pady=6)
+
+    def execute_add():
+        try:
+            ward_id = int(ward_id_entry.get().strip())
+        except ValueError:
+            result_label.configure(text="❌ Ward ID must be a number.", text_color="#FF6B6B")
+            return
+        success, message = db.add_bed(ward_id)
+        result_label.configure(text=message, text_color="#4CAF50" if success else "#FF6B6B")
+        if success:
+            show_ward_summary()
+            bed_window.after(1200, bed_window.destroy)
+
+    ctk.CTkButton(
+        bed_window,
+        text="Add Bed",
+        command=execute_add,
+        fg_color="#4CAF50",
+        hover_color="#45a049",
+        height=38
+    ).pack(pady=10)
+
+
+def open_delete_bed_window():
+    """Opens a popup to delete a bed."""
+    if not require_admin_access("Delete Bed"):
+        return
+
+    bed_window = ctk.CTkToplevel(app)
+    bed_window.title("Delete Bed")
+    bed_window.geometry("460x240")
+    bed_window.transient(app)
+    bed_window.grab_set()
+
+    ctk.CTkLabel(bed_window, text="Delete Bed", font=("Arial", 14, "bold"), text_color="#F44336").pack(pady=10)
+    ctk.CTkLabel(bed_window, text="Bed ID:", anchor="w").pack(fill="x", padx=30)
+    bed_id_entry = ctk.CTkEntry(bed_window, placeholder_text="e.g., 1", width=390)
+    bed_id_entry.pack(pady=6, padx=30)
+    bed_id_entry.focus()
+
+    result_label = ctk.CTkLabel(bed_window, text="", font=("Arial", 10))
+    result_label.pack(pady=6)
+
+    def execute_delete():
+        try:
+            bed_id = int(bed_id_entry.get().strip())
+        except ValueError:
+            result_label.configure(text="❌ Bed ID must be a number.", text_color="#FF6B6B")
+            return
+        success, message = db.delete_bed(bed_id)
+        result_label.configure(text=message, text_color="#4CAF50" if success else "#FF6B6B")
+        if success:
+            show_ward_summary()
+            bed_window.after(1200, bed_window.destroy)
+
+    ctk.CTkButton(
+        bed_window,
+        text="Delete Bed",
+        command=execute_delete,
+        fg_color="#F44336",
+        hover_color="#d32f2f",
         height=38
     ).pack(pady=10)
 
@@ -1726,62 +1861,6 @@ def show_vitals_summary():
     adm_entry.bind("<Return>", lambda e: load_summary())
 
 
-def open_vitals_search_window():
-    """Opens a popup to search vitals for an admission by date range."""
-    import datetime
-
-    search_window = ctk.CTkToplevel(app)
-    search_window.title("Search Vitals by Date")
-    search_window.geometry("480x320")
-    search_window.transient(app)
-    search_window.grab_set()
-
-    ctk.CTkLabel(search_window, text="Search Vitals by Date Range", font=("Arial", 14, "bold")).pack(pady=10)
-
-    ctk.CTkLabel(search_window, text="Admission ID:", anchor="w").pack(fill="x", padx=30, pady=(6, 0))
-    adm_entry = ctk.CTkEntry(search_window, placeholder_text="e.g., 1", width=400)
-    adm_entry.pack(padx=30)
-    adm_entry.focus()
-
-    today_str = datetime.date.today().strftime("%Y-%m-%d")
-
-    ctk.CTkLabel(search_window, text="Start Date (YYYY-MM-DD):", anchor="w").pack(fill="x", padx=30, pady=(6, 0))
-    start_entry = ctk.CTkEntry(search_window, placeholder_text=f"e.g., {today_str}", width=400)
-    start_entry.pack(padx=30)
-
-    ctk.CTkLabel(search_window, text="End Date (YYYY-MM-DD):", anchor="w").pack(fill="x", padx=30, pady=(6, 0))
-    end_entry = ctk.CTkEntry(search_window, placeholder_text=f"e.g., {today_str}", width=400)
-    end_entry.insert(0, today_str)
-    end_entry.pack(padx=30)
-
-    error_label = ctk.CTkLabel(search_window, text="", font=("Arial", 10), text_color="#FF6B6B")
-    error_label.pack(pady=4)
-
-    def execute_search():
-        try:
-            admission_id = int(adm_entry.get().strip())
-        except ValueError:
-            error_label.configure(text="❌ Admission ID must be a number.")
-            return
-        start_date = start_entry.get().strip()
-        end_date   = end_entry.get().strip()
-        if not start_date or not end_date:
-            error_label.configure(text="❌ Please enter both start and end dates.")
-            return
-        vitals_view = DiagnosticVitalsView(textbox, db)
-        vitals_view.show_search_results(admission_id, start_date, end_date)
-        search_window.destroy()
-
-    ctk.CTkButton(
-        search_window,
-        text="Search",
-        command=execute_search,
-        fg_color="#FF9800",
-        hover_color="#e68900",
-        height=38
-    ).pack(pady=10)
-
-
 def open_generate_bill_window():
     """Opens a popup to generate a discharge bill."""
     bill_window = ctk.CTkToplevel(app)
@@ -2059,6 +2138,18 @@ btn_ward_summary.pack(side="left", padx=5)
 btn_view_ward_beds = ctk.CTkButton(room_frame, text="View Ward Beds", command=open_view_ward_beds_window, height=40, font=("Arial", 12), width=150, fg_color="#00BCD4", hover_color="#0097A7")
 btn_view_ward_beds.pack(side="left", padx=5)
 
+btn_add_ward = ctk.CTkButton(room_frame, text="Add Ward", command=open_add_ward_window, height=40, font=("Arial", 12), width=130, fg_color="#4CAF50", hover_color="#45a049")
+btn_add_ward.pack(side="left", padx=5)
+
+btn_delete_ward = ctk.CTkButton(room_frame, text="Delete Ward", command=open_delete_ward_window, height=40, font=("Arial", 12), width=130, fg_color="#F44336", hover_color="#d32f2f")
+btn_delete_ward.pack(side="left", padx=5)
+
+btn_add_bed = ctk.CTkButton(room_frame, text="Add Bed", command=open_add_bed_window, height=40, font=("Arial", 12), width=120, fg_color="#4CAF50", hover_color="#45a049")
+btn_add_bed.pack(side="left", padx=5)
+
+btn_delete_bed = ctk.CTkButton(room_frame, text="Delete Bed", command=open_delete_bed_window, height=40, font=("Arial", 12), width=120, fg_color="#F44336", hover_color="#d32f2f")
+btn_delete_bed.pack(side="left", padx=5)
+
 btn_active_admissions = ctk.CTkButton(room_frame, text="Active Admissions", command=show_active_admissions, height=40, font=("Arial", 12), width=160, fg_color="#FF9800", hover_color="#e68900")
 btn_active_admissions.pack(side="left", padx=5)
 
@@ -2082,9 +2173,6 @@ btn_vitals_history.pack(side="left", padx=5)
 
 btn_vitals_summary = ctk.CTkButton(vitals_frame, text="Vitals Summary", command=show_vitals_summary, height=40, font=("Arial", 12), width=150, fg_color="#9C27B0", hover_color="#7b1fa2")
 btn_vitals_summary.pack(side="left", padx=5)
-
-btn_vitals_search = ctk.CTkButton(vitals_frame, text="Search by Date", command=open_vitals_search_window, height=40, font=("Arial", 12), width=150, fg_color="#FF9800", hover_color="#e68900")
-btn_vitals_search.pack(side="left", padx=5)
 
 # --- BILLING MANAGEMENT ---
 billing_frame = ctk.CTkFrame(app)
