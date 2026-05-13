@@ -943,6 +943,9 @@ def open_add_doctor_window():
     ).pack(pady=10)
     first_name_entry.focus()
     first_name_entry.bind("<Return>", lambda e: execute_add())
+    last_name_entry.bind("<Return>", lambda e: execute_add())
+    specialization_entry.bind("<Return>", lambda e: execute_add())
+    department_dropdown.bind("<Return>", lambda e: execute_add())
 
 
 def open_delete_doctor_window():

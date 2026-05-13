@@ -210,6 +210,9 @@ def get_all_patients():
             return []
         
         cursor = conn.cursor()
+        normalized_phone_expr = (
+            "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '-', ''), ' ', ''), '+', ''), '(', ''), ')', '')"
+        )
         query = """
         SELECT 
             patient_id,
@@ -259,9 +262,9 @@ def search_patients(search_term):
         FROM Patients
         WHERE CONCAT(first_name, ' ', last_name) LIKE %s 
            OR phone LIKE %s
-           OR (%s <> '' AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '-', ''), ' ', ''), '+', ''), '(', ''), ')', '') LIKE %s)
+           OR (%s <> '' AND {normalized_phone_expr} LIKE %s)
         ORDER BY first_name ASC
-        """
+        """.format(normalized_phone_expr=normalized_phone_expr)
         search_pattern = f"%{search_term}%"
         normalized_search_term = "".join(ch for ch in str(search_term) if ch.isdigit())
         normalized_search_pattern = f"%{normalized_search_term}%"
@@ -1229,7 +1232,8 @@ def get_patient_statistics():
             "female_patients": totals_row[2] or 0,
             "registered_last_30_days": None,
         }
-        stats["message"] = "Registration-date tracking is not available in current schema."
+        if stats["registered_last_30_days"] is None:
+            stats["message"] = "Registration-date tracking is not available in current schema."
         return stats
     except Error as e:
         print(f"❌ Error fetching patient statistics: {e}")
