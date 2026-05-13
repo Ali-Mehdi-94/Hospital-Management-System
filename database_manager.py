@@ -1,5 +1,5 @@
 import mysql.connector
-from mysql.connector import Error
+from mysql.connector import Error, errorcode
 
 def create_connection():
     """Establishes and returns a secure connection to the hospital database."""
@@ -61,7 +61,7 @@ def get_all_departments():
         return []
 
 
-def insert_new_doctor(first_name, last_name, specialization, department_id):
+def insert_new_doctor(first_name, last_name, specialization, department_id, contact_number=None, consultation_fee=None):
     """Inserts a new doctor after validating the selected department."""
     try:
         conn = create_connection()
@@ -75,12 +75,31 @@ def insert_new_doctor(first_name, last_name, specialization, department_id):
             conn.close()
             return False, f"❌ Department ID {department_id} not found."
 
+        normalized_contact_number = (contact_number or "").strip() or None
+        normalized_consultation_fee = None
+        if consultation_fee not in (None, ""):
+            normalized_consultation_fee = float(consultation_fee)
+
         cursor.execute(
             """
-            INSERT INTO Doctors (first_name, last_name, specialization, department_id)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO Doctors (
+                first_name,
+                last_name,
+                contact_number,
+                specialization,
+                consultation_fee,
+                department_id
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
             """,
-            (first_name, last_name, specialization, department_id),
+            (
+                first_name,
+                last_name,
+                normalized_contact_number,
+                specialization,
+                normalized_consultation_fee,
+                department_id,
+            ),
         )
         conn.commit()
         doctor_id = cursor.lastrowid
@@ -149,8 +168,8 @@ def delete_doctor(doctor_id, confirm_cascade=False, dependency_counts=None):
         if not conn.in_transaction:
             conn.start_transaction()
 
-        cursor.execute("DELETE FROM Appointments WHERE doctor_id = %s", (doctor_id,))
         cursor.execute("DELETE FROM Prescriptions WHERE doctor_id = %s", (doctor_id,))
+        cursor.execute("DELETE FROM Appointments WHERE doctor_id = %s", (doctor_id,))
         cursor.execute("DELETE FROM Doctors WHERE doctor_id = %s", (doctor_id,))
         conn.commit()
         cursor.close()
@@ -162,6 +181,12 @@ def delete_doctor(doctor_id, confirm_cascade=False, dependency_counts=None):
         except Exception:
             pass
         print(f"❌ Error deleting doctor: {e}")
+        if getattr(e, "errno", None) == errorcode.ER_ROW_IS_REFERENCED_2:
+            return (
+                False,
+                "⚠️ Doctor could not be deleted because related records still exist. Remove dependent records first.",
+                dependency_counts,
+            )
         return False, f"❌ Error: {e}", None
 
 def insert_new_patient(first_name, last_name, dob, gender, phone, address, emergency_contact):
