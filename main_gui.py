@@ -858,12 +858,16 @@ def show_doctors():
     doctor_list = db.get_all_doctors()
     
     if doctor_list:
+        textbox.insert("end", "+-----------+----------------------+----------------------+----------------------+\n")
+        textbox.insert("end", "| Doctor ID | Name                 | Specialization       | Department           |\n")
+        textbox.insert("end", "+-----------+----------------------+----------------------+----------------------+\n")
         for doc in doctor_list:
-            formatted_text = (
-                f"ID: {doc[0]} | Dr. {doc[1]} {doc[2]} | "
-                f"Specialist: {doc[3]} | Department: {doc[4]}\n"
+            doctor_name = f"Dr. {doc[1]} {doc[2]}"
+            textbox.insert(
+                "end",
+                f"| {str(doc[0]):<9} | {doctor_name[:20]:<20} | {str(doc[3])[:20]:<20} | {str(doc[4])[:20]:<20} |\n",
             )
-            textbox.insert("end", formatted_text)
+        textbox.insert("end", "+-----------+----------------------+----------------------+----------------------+\n")
     else:
         textbox.insert("end", "No doctors found or database connection failed.")
     textbox.configure(state="disabled")
@@ -891,7 +895,9 @@ def open_add_doctor_window():
 
     first_name_entry = _make_field("First Name:", "e.g., Ali")
     last_name_entry = _make_field("Last Name:", "e.g., Khan")
+    contact_number_entry = _make_field("Contact Number (Optional):", "e.g., +923001234567")
     specialization_entry = _make_field("Specialization:", "e.g., Cardiology")
+    consultation_fee_entry = _make_field("Consultation Fee (Optional):", "e.g., 2500")
 
     ctk.CTkLabel(add_window, text="Department:", anchor="w").pack(fill="x", padx=30, pady=(6, 0))
     if not departments:
@@ -910,12 +916,20 @@ def open_add_doctor_window():
     def execute_add():
         first_name = first_name_entry.get().strip()
         last_name = last_name_entry.get().strip()
+        contact_number = contact_number_entry.get().strip()
         specialization = specialization_entry.get().strip()
+        consultation_fee_text = consultation_fee_entry.get().strip()
         selection = department_dropdown.get()
 
         if not first_name or not last_name or not specialization:
             result_label.configure(text="❌ First name, last name, and specialization are required.", text_color="#FF6B6B")
             return
+        if consultation_fee_text:
+            try:
+                float(consultation_fee_text)
+            except ValueError:
+                result_label.configure(text="❌ Consultation fee must be a valid number.", text_color="#FF6B6B")
+                return
         if selection not in department_map:
             result_label.configure(text="❌ Please select a valid department.", text_color="#FF6B6B")
             return
@@ -923,7 +937,9 @@ def open_add_doctor_window():
         success, message = db.insert_new_doctor(
             first_name=first_name,
             last_name=last_name,
+            contact_number=contact_number,
             specialization=specialization,
+            consultation_fee=consultation_fee_text,
             department_id=department_map[selection],
         )
         if success:
@@ -935,7 +951,7 @@ def open_add_doctor_window():
 
     ctk.CTkButton(
         add_window,
-        text="Submit Doctor",
+        text="Add Doctor",
         command=execute_add,
         fg_color="#4CAF50",
         hover_color="#45a049",
